@@ -371,6 +371,7 @@ private class PanelOverlayWindow(
         action == "toggle_flashlight" -> "Torch"
         action == "game_mode" -> "Game"
         action == AppConfig.PARTIAL_SCREENSHOT_ACTION -> "Crop Shot"
+        action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> "Quick Settings"
         action == "pie" -> "Pie"
         action == "sub_gesture" -> "SubGesture"
         action == "condition" -> "Condition"
@@ -500,6 +501,7 @@ private class PanelOverlayWindow(
         action == AppConfig.CUSTOM_PANEL_ACTION -> R.drawable.ic_apps
         action == AppConfig.SIDE_BAR_LEFT_ACTION -> R.drawable.ic_side_bar_left
         action == AppConfig.SIDE_BAR_RIGHT_ACTION -> R.drawable.ic_side_bar_right
+        action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> R.drawable.ic_wifi
         else -> R.drawable.ic_action_dot
     }
 }

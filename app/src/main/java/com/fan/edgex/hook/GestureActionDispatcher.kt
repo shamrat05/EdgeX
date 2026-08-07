@@ -33,6 +33,7 @@ import com.fan.edgex.overlay.DrawerManager
 import com.fan.edgex.overlay.PanelOverlayManager
 import com.fan.edgex.overlay.PieManager
 import com.fan.edgex.overlay.PieView
+import com.fan.edgex.overlay.QuickSettingsPanelManager
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 
@@ -54,6 +55,7 @@ internal class GestureActionDispatcher(
         val context: Context,
         val touchX: Float,
         val touchY: Float,
+        val zone: String?,
     )
 
     private val serviceConnection = object : ServiceConnection {
@@ -137,14 +139,14 @@ internal class GestureActionDispatcher(
         log("[Gesture] triggerAction key=$configKey action='$action'")
         if (action.isNotEmpty() && action != "none") {
             handlerProvider().post {
-                performAction(action, context, touchX, touchY)
+                performAction(action, context, touchX, touchY, zone)
             }
         }
     }
 
     fun executeKeyAction(action: String, context: Context) {
         handlerProvider().post {
-            performAction(action, context, 0f, 0f)
+            performAction(action, context, 0f, 0f, null)
         }
     }
 
@@ -169,14 +171,26 @@ internal class GestureActionDispatcher(
         }
     }
 
-    private fun performAction(action: String, context: Context, touchX: Float, touchY: Float) {
+    private fun performAction(
+        action: String,
+        context: Context,
+        touchX: Float,
+        touchY: Float,
+        zone: String?,
+    ) {
         vibrateActionFeedback(context)
-        dispatchAction(action, context, touchX, touchY)
+        dispatchAction(action, context, touchX, touchY, zone)
     }
 
-    private fun dispatchAction(action: String, context: Context, touchX: Float, touchY: Float) {
+    private fun dispatchAction(
+        action: String,
+        context: Context,
+        touchX: Float,
+        touchY: Float,
+        zone: String?,
+    ) {
         if (LockscreenActionPolicy.requiresUnlock(action) && isKeyguardLocked(context)) {
-            pendingUnlockActions.addLast(PendingUnlockAction(action, context, touchX, touchY))
+            pendingUnlockActions.addLast(PendingUnlockAction(action, context, touchX, touchY, zone))
             log("Action queued until unlock: '$action'")
             return
         }
@@ -268,24 +282,33 @@ internal class GestureActionDispatcher(
             }
             action == AppConfig.CUSTOM_PANEL_ACTION -> {
                 PanelOverlayManager.showCustomPanel(context, resolveConfig) { selected ->
-                    dispatchAction(selected, context, touchX, touchY)
+                    dispatchAction(selected, context, touchX, touchY, zone)
                 }
+            }
+            action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> {
+                QuickSettingsPanelManager.show(
+                    context = context,
+                    resolveConfig = resolveConfig,
+                    zone = zone,
+                    touchX = touchX,
+                    touchY = touchY,
+                )
             }
             action == AppConfig.SIDE_BAR_LEFT_ACTION -> {
                 PanelOverlayManager.showSideBar(context, resolveConfig, "left") { selected ->
-                    dispatchAction(selected, context, touchX, touchY)
+                    dispatchAction(selected, context, touchX, touchY, zone)
                 }
             }
             action == AppConfig.SIDE_BAR_RIGHT_ACTION -> {
                 PanelOverlayManager.showSideBar(context, resolveConfig, "right") { selected ->
-                    dispatchAction(selected, context, touchX, touchY)
+                    dispatchAction(selected, context, touchX, touchY, zone)
                 }
             }
             action.startsWith("multi_action:") -> {
-                executeMultiAction(action, context, touchX, touchY)
+                executeMultiAction(action, context, touchX, touchY, zone)
             }
             action.startsWith("condition:") -> {
-                executeConditionAction(action, context, touchX, touchY)
+                executeConditionAction(action, context, touchX, touchY, zone)
             }
             action == "toggle_flashlight" -> {
                 FlashlightManager.toggle(context, handlerProvider())
@@ -321,6 +344,7 @@ internal class GestureActionDispatcher(
                         pending.context,
                         pending.touchX,
                         pending.touchY,
+                        pending.zone,
                     )
                 }, delay)
                 delay += stepSettleDuration(pending.action)
@@ -334,7 +358,13 @@ internal class GestureActionDispatcher(
         false
     }
 
-    private fun executeConditionAction(action: String, context: Context, touchX: Float, touchY: Float) {
+    private fun executeConditionAction(
+        action: String,
+        context: Context,
+        touchX: Float,
+        touchY: Float,
+        zone: String?,
+    ) {
         val id = action.removePrefix("condition:")
         if (id.isBlank()) return
         val condCode = resolveConfig(ConditionStore.condIfKey(id))
@@ -355,11 +385,17 @@ internal class GestureActionDispatcher(
             resolveConfig(ConditionStore.condElseKey(id))
         }
         if (nextAction.isNotBlank() && nextAction != "none") {
-            dispatchAction(nextAction, context, touchX, touchY)
+            dispatchAction(nextAction, context, touchX, touchY, zone)
         }
     }
 
-    private fun executeMultiAction(action: String, context: Context, touchX: Float, touchY: Float) {
+    private fun executeMultiAction(
+        action: String,
+        context: Context,
+        touchX: Float,
+        touchY: Float,
+        zone: String?,
+    ) {
         val id = action.removePrefix("multi_action:")
         if (id.isBlank()) return
         val steps = com.fan.edgex.config.MultiActionStore.getStepsFromConfig(resolveConfig, id)
@@ -373,7 +409,7 @@ internal class GestureActionDispatcher(
             handler.postDelayed({
                 try {
                     de.robv.android.xposed.XposedBridge.log("EdgeX: multi_action executing step='$code'")
-                    dispatchAction(code, context, touchX, touchY)
+                    dispatchAction(code, context, touchX, touchY, zone)
                 } catch (t: Throwable) {
                     log("multi_action step '$code' failed: ${t.message}")
                 }
@@ -463,6 +499,7 @@ internal class GestureActionDispatcher(
         action.startsWith("launch_app:")     -> R.drawable.ic_launch_app
         action == AppConfig.SIDE_BAR_LEFT_ACTION -> R.drawable.ic_side_bar_left
         action == AppConfig.SIDE_BAR_RIGHT_ACTION -> R.drawable.ic_side_bar_right
+        action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> R.drawable.ic_wifi
         action == "toggle_flashlight"            -> R.drawable.ic_flashlight
         action == "toggle_wifi"                  -> R.drawable.ic_wifi
         action == "toggle_mobile_data"           -> R.drawable.ic_mobile_data
@@ -472,7 +509,7 @@ internal class GestureActionDispatcher(
 
     fun commitPieAction(context: Context) {
         val action = PieManager.commit() ?: return
-        performAction(action, context, 0f, 0f)
+        performAction(action, context, 0f, 0f, null)
     }
 
     private fun pieActionToLabel(action: String): String = when {
@@ -481,6 +518,7 @@ internal class GestureActionDispatcher(
         action == "recents" || action == "recent" -> "Recents"
         action == "screenshot"        -> "Screenshot"
         action == AppConfig.PARTIAL_SCREENSHOT_ACTION -> "Partial SS"
+        action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> "Quick Settings"
         action == "lock_screen"       -> "Lock"
         action == "expand_notifications" -> "Notifs"
         action == "kill_app"          -> "Kill App"

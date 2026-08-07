@@ -62,6 +62,7 @@ class ActionSelectionActivity : AppCompatActivity() {
             code.startsWith("multi_action:") -> R.drawable.ic_multi_action
             code.startsWith("condition:") -> R.drawable.ic_condition
             code == AppConfig.CUSTOM_PANEL_ACTION -> R.drawable.ic_apps
+            code == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> R.drawable.ic_wifi
             code == AppConfig.SIDE_BAR_LEFT_ACTION -> R.drawable.ic_side_bar_left
             code == AppConfig.SIDE_BAR_RIGHT_ACTION -> R.drawable.ic_side_bar_right
             code == "toggle_flashlight" -> R.drawable.ic_flashlight
@@ -138,6 +139,7 @@ class ActionSelectionActivity : AppCompatActivity() {
                 "sub_gesture" -> R.string.action_sub_gesture
                 "pie" -> R.string.action_pie
                 AppConfig.CUSTOM_PANEL_ACTION -> R.string.action_custom_panel
+                AppConfig.QUICK_SETTINGS_PANEL_ACTION -> R.string.action_quick_settings_panel
                 AppConfig.SIDE_BAR_LEFT_ACTION -> R.string.action_left_side_bar
                 AppConfig.SIDE_BAR_RIGHT_ACTION -> R.string.action_right_side_bar
                 else -> 0
@@ -182,6 +184,7 @@ class ActionSelectionActivity : AppCompatActivity() {
         ActionItem(getString(R.string.action_multi_action), "multi_action", R.drawable.ic_multi_action),
         ActionItem(getString(R.string.action_condition), "condition", R.drawable.ic_condition),
         ActionItem(getString(R.string.action_custom_panel), AppConfig.CUSTOM_PANEL_ACTION, R.drawable.ic_apps),
+        ActionItem(getString(R.string.action_quick_settings_panel), AppConfig.QUICK_SETTINGS_PANEL_ACTION, R.drawable.ic_wifi),
         ActionItem(getString(R.string.action_left_side_bar), AppConfig.SIDE_BAR_LEFT_ACTION, R.drawable.ic_side_bar_left),
         ActionItem(getString(R.string.action_right_side_bar), AppConfig.SIDE_BAR_RIGHT_ACTION, R.drawable.ic_side_bar_right),
         ActionItem(getString(R.string.action_toggle_flashlight), "toggle_flashlight", R.drawable.ic_flashlight),

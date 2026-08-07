@@ -61,6 +61,7 @@ val allActionSelectionItems = listOf(
     ActionSelectionItem("multi_action", R.string.action_multi_action, EdgeXIcons.Multi, needsSecondary = true),
     ActionSelectionItem("condition", R.string.action_condition, EdgeXIcons.Condition, needsSecondary = true),
     ActionSelectionItem(AppConfig.CUSTOM_PANEL_ACTION, R.string.action_custom_panel, EdgeXIcons.CustomPanel),
+    ActionSelectionItem(AppConfig.QUICK_SETTINGS_PANEL_ACTION, R.string.action_quick_settings_panel, EdgeXIcons.Wifi),
     ActionSelectionItem(AppConfig.SIDE_BAR_LEFT_ACTION, R.string.action_left_side_bar, EdgeXIcons.SideBarLeft),
     ActionSelectionItem(AppConfig.SIDE_BAR_RIGHT_ACTION, R.string.action_right_side_bar, EdgeXIcons.SideBarRight),
     ActionSelectionItem("toggle_flashlight", R.string.action_toggle_flashlight, EdgeXIcons.Flashlight),
