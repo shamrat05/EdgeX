@@ -33,6 +33,7 @@ class ActionSelectionActivity : AppCompatActivity() {
             code == "home" -> R.drawable.ic_home
             code == "recents" -> R.drawable.ic_recents
             code == "expand_notifications" -> R.drawable.ic_notifications
+            code == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.drawable.ic_wifi
             code.startsWith("shell:") -> R.drawable.ic_terminal
             code == "sub_gesture" -> R.drawable.ic_sub_gesture
             code == "pie" -> R.drawable.ic_pie_menu
@@ -117,6 +118,7 @@ class ActionSelectionActivity : AppCompatActivity() {
                 "home" -> R.string.action_home
                 "recents" -> R.string.action_recents
                 "expand_notifications" -> R.string.action_expand_notifications
+                AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.string.action_expand_quick_settings
                 "clear_background" -> R.string.action_clear_background
                 "freezer_drawer" -> R.string.action_freezer_drawer
                 "refreeze" -> R.string.action_refreeze
@@ -159,6 +161,7 @@ class ActionSelectionActivity : AppCompatActivity() {
         ActionItem(getString(R.string.action_home), "home", R.drawable.ic_home),
         ActionItem(getString(R.string.action_recents), "recents", R.drawable.ic_recents),
         ActionItem(getString(R.string.action_expand_notifications), "expand_notifications", R.drawable.ic_notifications),
+        ActionItem(getString(R.string.action_expand_quick_settings), AppConfig.NATIVE_QUICK_SETTINGS_ACTION, R.drawable.ic_wifi),
         ActionItem(getString(R.string.action_shell_command), "shell_command", R.drawable.ic_terminal),
         ActionItem(getString(R.string.action_sub_gesture), "sub_gesture", R.drawable.ic_sub_gesture),
         ActionItem(getString(R.string.action_pie), "pie", R.drawable.ic_pie_menu),

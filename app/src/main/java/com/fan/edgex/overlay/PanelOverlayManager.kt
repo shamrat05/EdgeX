@@ -354,6 +354,7 @@ private class PanelOverlayWindow(
         action == "home" -> "Home"
         action == "recent" || action == "recents" -> "Recents"
         action == "expand_notifications" -> "Notify"
+        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> "System QS"
         action == "clear_background" -> "Clear"
         action == "freezer_drawer" -> "Freezer"
         action == "refreeze" -> "Refreeze"
@@ -466,6 +467,7 @@ private class PanelOverlayWindow(
         action == "home" -> R.drawable.ic_home
         action == "recent" || action == "recents" -> R.drawable.ic_recents
         action == "expand_notifications" -> R.drawable.ic_notifications
+        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.drawable.ic_wifi
         action.startsWith("shell:") -> R.drawable.ic_terminal
         action.startsWith("launch_app:") -> R.drawable.ic_launch_app
         action.startsWith("app_shortcut:") -> R.drawable.ic_app_shortcut

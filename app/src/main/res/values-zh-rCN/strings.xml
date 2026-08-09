@@ -173,6 +173,7 @@
     <string name="action_shell_command">Shell 命令</string>
     <string name="action_sub_gesture">子手势</string>
     <string name="action_expand_notifications">展开通知栏</string>
+    <string name="action_expand_quick_settings">展开快捷设置</string>
     <string name="action_clear_background">清除后台应用</string>
     <string name="action_launch_app">启动应用</string>
     <string name="action_music_control">音乐控制</string>

@@ -36,6 +36,7 @@ val allActionSelectionItems = listOf(
     ActionSelectionItem("home", R.string.action_home, EdgeXIcons.Home),
     ActionSelectionItem("recents", R.string.action_recents, EdgeXIcons.Recents),
     ActionSelectionItem("expand_notifications", R.string.action_expand_notifications, EdgeXIcons.Notifications),
+    ActionSelectionItem(AppConfig.NATIVE_QUICK_SETTINGS_ACTION, R.string.action_expand_quick_settings, EdgeXIcons.Wifi),
     ActionSelectionItem("shell_command", R.string.action_shell_command, EdgeXIcons.Terminal, needsSecondary = true),
     ActionSelectionItem("sub_gesture", R.string.action_sub_gesture, EdgeXIcons.SubGesture, needsSecondary = true),
     ActionSelectionItem("pie", R.string.action_pie, EdgeXIcons.Pie),

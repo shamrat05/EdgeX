@@ -208,7 +208,7 @@ internal class GestureActionDispatcher(
             action == "notifications" || action == "expand_notifications" -> {
                 GlobalActionHelper.performGlobalAction(context, GlobalActionHelper.GLOBAL_ACTION_NOTIFICATIONS)
             }
-            action == "quick_settings" -> {
+            action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> {
                 GlobalActionHelper.performGlobalAction(context, GlobalActionHelper.GLOBAL_ACTION_QUICK_SETTINGS)
             }
             action == "power_dialog" -> {
@@ -469,6 +469,7 @@ internal class GestureActionDispatcher(
         action == AppConfig.PARTIAL_SCREENSHOT_ACTION -> R.drawable.ic_partial_screenshot
         action == "lock_screen"              -> R.drawable.ic_power
         action == "expand_notifications"     -> R.drawable.ic_notifications
+        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.drawable.ic_wifi
         action == "kill_app"                 -> R.drawable.ic_kill_app
         action == "prev_app"                 -> R.drawable.ic_prev_app
         action == "next_app"                 -> R.drawable.ic_next_app
@@ -500,6 +501,7 @@ internal class GestureActionDispatcher(
         action == AppConfig.SIDE_BAR_LEFT_ACTION -> R.drawable.ic_side_bar_left
         action == AppConfig.SIDE_BAR_RIGHT_ACTION -> R.drawable.ic_side_bar_right
         action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> R.drawable.ic_wifi
+        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.drawable.ic_wifi
         action == "toggle_flashlight"            -> R.drawable.ic_flashlight
         action == "toggle_wifi"                  -> R.drawable.ic_wifi
         action == "toggle_mobile_data"           -> R.drawable.ic_mobile_data
@@ -519,6 +521,7 @@ internal class GestureActionDispatcher(
         action == "screenshot"        -> "Screenshot"
         action == AppConfig.PARTIAL_SCREENSHOT_ACTION -> "Partial SS"
         action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> "Quick Settings"
+        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> "System QS"
         action == "lock_screen"       -> "Lock"
         action == "expand_notifications" -> "Notifs"
         action == "kill_app"          -> "Kill App"
