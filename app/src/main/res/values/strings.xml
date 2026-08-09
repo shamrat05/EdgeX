@@ -174,7 +174,7 @@
     <string name="action_shell_command">Shell Command</string>
     <string name="action_sub_gesture">Sub-gesture</string>
     <string name="action_expand_notifications">Expand Notifications</string>
-    <string name="action_expand_quick_settings">Expand Quick Settings</string>
+    <string name="action_expand_quick_settings">Quick Setting</string>
     <string name="action_clear_background">Clear Background Apps</string>
     <string name="action_launch_app">Launch App</string>
     <string name="action_music_control">Music Control</string>
@@ -217,7 +217,7 @@
     <string name="cond_screen_portrait">Screen: Portrait</string>
     <string name="cond_screen_landscape">Screen: Landscape</string>
     <string name="action_custom_panel">Custom Panel</string>
-    <string name="action_quick_settings_panel">Quick Settings Panel</string>
+    <string name="action_quick_settings_panel">Quick Setting(iOS)</string>
     <string name="quick_settings_wifi">Wi-Fi</string>
     <string name="quick_settings_bluetooth">Bluetooth</string>
     <string name="quick_settings_airplane">Airplane mode</string>
