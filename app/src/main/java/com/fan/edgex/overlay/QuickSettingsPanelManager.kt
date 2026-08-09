@@ -293,7 +293,7 @@ private class QuickSettingsPanelWindow(
                 mediaTitleView = TextView(context).apply {
                     setTextColor(Color.WHITE)
                     textSize = 12f
-                    gravity = Gravity.CENTER_VERTICAL
+                    gravity = Gravity.CENTER
                     isSingleLine = true
                     ellipsize = TextUtils.TruncateAt.MARQUEE
                     marqueeRepeatLimit = -1
@@ -444,6 +444,7 @@ private class QuickSettingsPanelWindow(
             if (state.mediaPlaying) R.drawable.ic_music_pause else R.drawable.ic_music_play,
         )?.mutate())
         mediaTitleView?.apply {
+            setTextColor(if (state.mediaAvailable) Color.WHITE else Color.argb(145, 255, 255, 255))
             text = when {
                 !state.mediaAvailable -> ModuleRes.getString(R.string.quick_settings_no_media)
                 !state.mediaTitle.isNullOrBlank() -> state.mediaTitle
