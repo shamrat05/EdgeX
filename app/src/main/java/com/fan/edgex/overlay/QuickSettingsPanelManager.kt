@@ -300,7 +300,7 @@ private class QuickSettingsPanelWindow(
                 orientation = LinearLayout.VERTICAL
                 mediaTitleView = TextView(context).apply {
                     setTextColor(Color.WHITE)
-                    textSize = 12f
+                    textSize = 13f
                     gravity = Gravity.CENTER
                     isSingleLine = true
                     ellipsize = TextUtils.TruncateAt.MARQUEE
