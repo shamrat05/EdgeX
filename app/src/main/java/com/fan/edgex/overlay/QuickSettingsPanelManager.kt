@@ -10,6 +10,8 @@ import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -24,9 +26,11 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.text.TextUtils
 import com.fan.edgex.R
+import com.fan.edgex.config.AppConfig
 import com.fan.edgex.config.ThemeColorResolver
 import com.fan.edgex.hook.ModuleRes
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 object QuickSettingsPanelManager {
     private var activeWindow: QuickSettingsPanelWindow? = null
@@ -68,6 +72,7 @@ private class QuickSettingsPanelWindow(
     private val dp = context.resources.displayMetrics.density
     private val accent = ThemeColorResolver.resolveThemeColor(resolveConfig)
     private val onAccent = if (luminance(accent) > 0.58) Color.rgb(25, 25, 25) else Color.WHITE
+    private val hapticsEnabled = resolveConfig(AppConfig.HAPTIC_FEEDBACK) == "true"
     private val tileBindings = mutableMapOf<QuickSettingsIcon, TileBinding>()
     private var brightnessSlider: VerticalLevelSlider? = null
     private var volumeSlider: VerticalLevelSlider? = null
@@ -267,7 +272,10 @@ private class QuickSettingsPanelWindow(
             isClickable = true
             isFocusable = true
             setPadding(px(13), px(13), px(13), px(13))
-            setOnClickListener { action() }
+            setOnClickListener {
+                emitHaptic()
+                action()
+            }
         }
         val container = FrameLayout(context).apply {
             foregroundGravity = Gravity.CENTER
@@ -352,7 +360,10 @@ private class QuickSettingsPanelWindow(
         isClickable = true
         isFocusable = true
         setPadding(px(17), px(17), px(17), px(17))
-        setOnClickListener { action() }
+        setOnClickListener {
+            emitHaptic()
+            action()
+        }
     }
 
     private fun buildUtilityRow(): View {
@@ -390,7 +401,10 @@ private class QuickSettingsPanelWindow(
             isClickable = true
             isFocusable = true
             setPadding(px(13), px(13), px(13), px(13))
-            setOnClickListener { spec.action() }
+            setOnClickListener {
+                emitHaptic()
+                spec.action()
+            }
         }
         val container = FrameLayout(context).apply {
             addView(image, FrameLayout.LayoutParams(px(52), px(52), Gravity.CENTER))
@@ -410,8 +424,23 @@ private class QuickSettingsPanelWindow(
         accent = accent,
         onAccent = onAccent,
         icon = iconResolver.load(icon, fallbackRes),
+        onHaptic = ::emitHaptic,
         onLevelChanged = onLevelChanged,
     ).apply { contentDescription = description }
+
+    private fun emitHaptic() {
+        if (!hapticsEnabled) return
+        runCatching {
+            val effect = when (resolveConfig(AppConfig.HAPTIC_FEEDBACK_TYPE)) {
+                AppConfig.HAPTIC_FEEDBACK_TYPE_TICK -> VibrationEffect.EFFECT_TICK
+                AppConfig.HAPTIC_FEEDBACK_TYPE_HEAVY_CLICK -> VibrationEffect.EFFECT_HEAVY_CLICK
+                AppConfig.HAPTIC_FEEDBACK_TYPE_DOUBLE_CLICK -> VibrationEffect.EFFECT_DOUBLE_CLICK
+                else -> VibrationEffect.EFFECT_CLICK
+            }
+            context.getSystemService(Vibrator::class.java)
+                ?.vibrate(VibrationEffect.createPredefined(effect))
+        }
+    }
 
     private fun renderState(state: QuickSettingsState) {
         updateTile(QuickSettingsIcon.WIFI, state.wifi)
@@ -619,6 +648,7 @@ private class VerticalLevelSlider(
     private val accent: Int,
     private val onAccent: Int,
     private val icon: Drawable?,
+    private val onHaptic: () -> Unit,
     private val onLevelChanged: (Float) -> Unit,
 ) : View(context) {
     private val density = resources.displayMetrics.density
@@ -627,6 +657,7 @@ private class VerticalLevelSlider(
     private val rect = RectF()
     private var level = 0.5f
     private var tracking = false
+    private var lastHapticStep = -1
 
     init {
         isClickable = true
@@ -641,6 +672,7 @@ private class VerticalLevelSlider(
     fun setLevelFromSystem(value: Float) {
         if (tracking) return
         level = value.coerceIn(0f, 1f)
+        lastHapticStep = (level * HAPTIC_STEPS).roundToInt()
         invalidate()
     }
 
@@ -703,9 +735,18 @@ private class VerticalLevelSlider(
     private fun updateFromTouch(y: Float) {
         val usable = (height - paddingTop - paddingBottom).coerceAtLeast(1)
         level = (1f - (y - paddingTop) / usable).coerceIn(0f, 1f)
+        val hapticStep = (level * HAPTIC_STEPS).roundToInt()
+        if (hapticStep != lastHapticStep) {
+            lastHapticStep = hapticStep
+            onHaptic()
+        }
         invalidate()
         onLevelChanged(level)
     }
 
     private fun dp(value: Int): Int = (value * density + 0.5f).toInt()
+
+    private companion object {
+        const val HAPTIC_STEPS = 20
+    }
 }
