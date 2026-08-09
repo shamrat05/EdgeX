@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.hardware.display.DisplayManager
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
@@ -23,6 +24,7 @@ import android.provider.MediaStore
 import android.provider.Settings
 import android.view.KeyEvent
 import java.util.concurrent.Executor
+import kotlin.math.roundToInt
 
 internal data class QuickSettingsState(
     val wifi: Boolean,
@@ -35,6 +37,7 @@ internal data class QuickSettingsState(
     val brightness: Float,
     val volume: Float,
     val mediaArtwork: Bitmap?,
+    val mediaTitle: String?,
     val mediaPlaying: Boolean,
 )
 
@@ -213,19 +216,23 @@ internal class QuickSettingsController(private val context: Context) {
     }
 
     fun setBrightness(value: Float) {
-        val level = value.coerceIn(0.01f, 1f)
+        val (minimum, maximum) = brightnessRange()
+        val level = (minimum + value.coerceIn(0f, 1f) * (maximum - minimum))
         runCatching {
-            val displayManager = context.getSystemService("display")
+            val displayManager = context.getSystemService(DisplayManager::class.java) ?: return
             displayManager.javaClass.getMethod("setBrightness", Int::class.java, Float::class.java)
                 .invoke(displayManager, 0, level)
         }
     }
 
     fun setVolume(value: Float) {
-        val maximum = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: return
-        audioManager.setStreamVolume(
+        val audio = audioManager ?: return
+        val minimum = audio.getStreamMinVolume(AudioManager.STREAM_MUSIC)
+        val maximum = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val volume = (minimum + value.coerceIn(0f, 1f) * (maximum - minimum)).roundToInt()
+        audio.setStreamVolume(
             AudioManager.STREAM_MUSIC,
-            (value.coerceIn(0f, 1f) * maximum).toInt(),
+            volume.coerceIn(minimum, maximum),
             0,
         )
     }
@@ -277,6 +284,7 @@ internal class QuickSettingsController(private val context: Context) {
         brightness = readBrightness(),
         volume = readVolume(),
         mediaArtwork = readMediaArtwork(),
+        mediaTitle = readMediaTitle(),
         mediaPlaying = activeMediaController?.playbackState?.state in PLAYING_MEDIA_STATES,
     )
 
@@ -284,6 +292,18 @@ internal class QuickSettingsController(private val context: Context) {
         metadata.getBitmap(MediaMetadata.METADATA_KEY_ART)
             ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
             ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+    }
+
+    private fun readMediaTitle(): String? = activeMediaController?.metadata?.let { metadata ->
+        val title = metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+            ?: metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
+        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
+        when {
+            !title.isNullOrBlank() && !artist.isNullOrBlank() -> "$title · $artist"
+            !title.isNullOrBlank() -> title
+            !artist.isNullOrBlank() -> artist
+            else -> null
+        }
     }
 
     private fun isAirplaneModeEnabled(): Boolean = runCatching {
@@ -296,18 +316,33 @@ internal class QuickSettingsController(private val context: Context) {
     }.getOrDefault(false)
 
     private fun readBrightness(): Float = runCatching {
-        val displayManager = context.getSystemService("display")
-        (displayManager.javaClass.getMethod("getBrightness", Int::class.java).invoke(displayManager, 0) as Float)
-            .takeUnless(Float::isNaN)
-            ?.coerceIn(0f, 1f)
-            ?: DEFAULT_LEVEL
+        val displayManager = context.getSystemService(DisplayManager::class.java)
+            ?: return@runCatching DEFAULT_LEVEL
+        val current = (displayManager.javaClass.getMethod("getBrightness", Int::class.java)
+            .invoke(displayManager, 0) as Float).takeUnless(Float::isNaN)
+            ?: return@runCatching DEFAULT_LEVEL
+        val (minimum, maximum) = brightnessRange()
+        ((current - minimum) / (maximum - minimum)).coerceIn(0f, 1f)
     }.getOrDefault(DEFAULT_LEVEL)
 
     private fun readVolume(): Float {
-        val maximum = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)?.coerceAtLeast(1) ?: return DEFAULT_LEVEL
-        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        return current.toFloat() / maximum
+        val audio = audioManager ?: return DEFAULT_LEVEL
+        val minimum = audio.getStreamMinVolume(AudioManager.STREAM_MUSIC)
+        val maximum = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val range = (maximum - minimum).coerceAtLeast(1)
+        return (audio.getStreamVolume(AudioManager.STREAM_MUSIC) - minimum).toFloat() / range
     }
+
+    private fun brightnessRange(): Pair<Float, Float> = runCatching {
+        val display = context.getSystemService(DisplayManager::class.java)?.getDisplay(0)
+            ?: return@runCatching 0f to 1f
+        val info = display.javaClass.getMethod("getBrightnessInfo").invoke(display)
+        val minimum = info.javaClass.getField("brightnessMinimum").getFloat(info)
+            .takeUnless(Float::isNaN) ?: 0f
+        val maximum = info.javaClass.getField("brightnessMaximum").getFloat(info)
+            .takeUnless(Float::isNaN) ?: 1f
+        minimum to maximum.coerceAtLeast(minimum + 0.001f)
+    }.getOrDefault(0f to 1f)
 
     private fun flashlightCameraId(): String? = runCatching {
         cameraManager?.cameraIdList?.firstOrNull { id ->

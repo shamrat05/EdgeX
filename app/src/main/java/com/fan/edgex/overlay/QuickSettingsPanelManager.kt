@@ -21,10 +21,11 @@ import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
+import android.text.TextUtils
 import com.fan.edgex.R
 import com.fan.edgex.config.ThemeColorResolver
 import com.fan.edgex.hook.ModuleRes
-import kotlin.math.max
 import kotlin.math.min
 
 object QuickSettingsPanelManager {
@@ -71,6 +72,7 @@ private class QuickSettingsPanelWindow(
     private var brightnessSlider: VerticalLevelSlider? = null
     private var volumeSlider: VerticalLevelSlider? = null
     private var mediaArtworkView: ImageView? = null
+    private var mediaTitleView: TextView? = null
     private var mediaPlayPauseButton: ImageView? = null
     private var rootView: FrameLayout? = null
     private var panelView: View? = null
@@ -156,6 +158,7 @@ private class QuickSettingsPanelWindow(
             brightnessSlider = null
             volumeSlider = null
             mediaArtworkView = null
+            mediaTitleView = null
             mediaPlayPauseButton = null
             onDismiss()
         }
@@ -182,7 +185,7 @@ private class QuickSettingsPanelWindow(
         ))
         panel.addView(buildMediaRow(), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            px(72),
+            px(92),
         ).apply { topMargin = px(12) })
         panel.addView(buildUtilityRow(), LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -278,17 +281,42 @@ private class QuickSettingsPanelWindow(
             setPadding(px(10), px(8), px(10), px(8))
             background = roundedBackground(MODULE_COLOR, 20f)
 
-            addView(createMediaArtwork(), LinearLayout.LayoutParams(px(50), px(50)))
-            addView(createMediaButton(R.drawable.ic_music_previous,
-                ModuleRes.getString(R.string.quick_settings_previous), controller::mediaPrevious),
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-            mediaPlayPauseButton = createMediaButton(R.drawable.ic_music_play,
-                ModuleRes.getString(R.string.quick_settings_play_pause), controller::mediaPlayPause).also {
-                addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-            }
-            addView(createMediaButton(R.drawable.ic_music_next,
-                ModuleRes.getString(R.string.quick_settings_next), controller::mediaNext),
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            addView(createMediaArtwork(), LinearLayout.LayoutParams(px(50), px(50)).apply {
+                rightMargin = px(8)
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                mediaTitleView = TextView(context).apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 12f
+                    gravity = Gravity.CENTER_VERTICAL
+                    isSingleLine = true
+                    ellipsize = TextUtils.TruncateAt.MARQUEE
+                    marqueeRepeatLimit = -1
+                    isSelected = true
+                }.also { addView(it, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    px(24),
+                )) }
+
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(createMediaButton(R.drawable.ic_music_previous,
+                        ModuleRes.getString(R.string.quick_settings_previous), controller::mediaPrevious),
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                    mediaPlayPauseButton = createMediaButton(R.drawable.ic_music_play,
+                        ModuleRes.getString(R.string.quick_settings_play_pause), controller::mediaPlayPause).also {
+                        addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                    }
+                    addView(createMediaButton(R.drawable.ic_music_next,
+                        ModuleRes.getString(R.string.quick_settings_next), controller::mediaNext),
+                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                }, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                ))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
     }
 
@@ -410,6 +438,10 @@ private class QuickSettingsPanelWindow(
         mediaPlayPauseButton?.setImageDrawable(ModuleRes.getDrawable(
             if (state.mediaPlaying) R.drawable.ic_music_pause else R.drawable.ic_music_play,
         )?.mutate())
+        mediaTitleView?.apply {
+            text = state.mediaTitle.orEmpty()
+            isSelected = !state.mediaTitle.isNullOrBlank()
+        }
     }
 
     private fun updateTile(icon: QuickSettingsIcon, active: Boolean) {
@@ -606,10 +638,11 @@ private class VerticalLevelSlider(
         rect.set(left, top, right, bottom)
         canvas.drawRoundRect(rect, radius, radius, trackPaint)
 
-        val minimumFill = dp(52).toFloat()
-        val fillHeight = max((bottom - top) * level, minimumFill)
-        rect.set(left, bottom - fillHeight, right, bottom)
-        canvas.drawRoundRect(rect, radius, radius, fillPaint)
+        val fillHeight = (bottom - top) * level
+        if (fillHeight > 0f) {
+            rect.set(left, bottom - fillHeight, right, bottom)
+            canvas.drawRoundRect(rect, radius, radius, fillPaint)
+        }
 
         icon?.let { drawable ->
             drawable.setTint(onAccent)
