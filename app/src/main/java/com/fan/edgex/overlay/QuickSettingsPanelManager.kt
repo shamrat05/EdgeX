@@ -293,7 +293,7 @@ private class QuickSettingsPanelWindow(
             setPadding(px(10), px(8), px(10), px(8))
             background = roundedBackground(MODULE_COLOR, 20f)
 
-            addView(createMediaArtwork(), LinearLayout.LayoutParams(px(50), px(50)).apply {
+            addView(createMediaArtwork(), LinearLayout.LayoutParams(px(56), px(56)).apply {
                 rightMargin = px(8)
             })
             addView(LinearLayout(context).apply {
@@ -359,7 +359,7 @@ private class QuickSettingsPanelWindow(
         contentDescription = description
         isClickable = true
         isFocusable = true
-        setPadding(px(17), px(17), px(17), px(17))
+        setPadding(px(13), px(13), px(13), px(13))
         setOnClickListener {
             emitHaptic()
             action()
