@@ -240,7 +240,7 @@ private class QuickSettingsPanelWindow(
                 Triple(QuickSettingsIcon.BLUETOOTH, R.drawable.ic_bluetooth, controller::toggleBluetooth),
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(buildTileRow(
-                Triple(QuickSettingsIcon.AIRPLANE, R.drawable.ic_launch_app, controller::toggleAirplaneMode),
+                Triple(QuickSettingsIcon.AIRPLANE, R.drawable.ic_airplane_mode, controller::toggleAirplaneMode),
                 Triple(QuickSettingsIcon.HOTSPOT, R.drawable.ic_wifi, controller::toggleHotspot),
             ), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
                 topMargin = px(4)
