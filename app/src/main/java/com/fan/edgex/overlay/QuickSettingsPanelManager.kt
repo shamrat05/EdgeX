@@ -73,7 +73,9 @@ private class QuickSettingsPanelWindow(
     private var volumeSlider: VerticalLevelSlider? = null
     private var mediaArtworkView: ImageView? = null
     private var mediaTitleView: TextView? = null
+    private var mediaPreviousButton: ImageView? = null
     private var mediaPlayPauseButton: ImageView? = null
+    private var mediaNextButton: ImageView? = null
     private var rootView: FrameLayout? = null
     private var panelView: View? = null
     private var anchor: QuickSettingsAnchor? = null
@@ -159,7 +161,9 @@ private class QuickSettingsPanelWindow(
             volumeSlider = null
             mediaArtworkView = null
             mediaTitleView = null
+            mediaPreviousButton = null
             mediaPlayPauseButton = null
+            mediaNextButton = null
             onDismiss()
         }
     }
@@ -301,16 +305,16 @@ private class QuickSettingsPanelWindow(
 
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL
-                    addView(createMediaButton(R.drawable.ic_music_previous,
-                        ModuleRes.getString(R.string.quick_settings_previous), controller::mediaPrevious),
-                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                    mediaPreviousButton = createMediaButton(R.drawable.ic_music_previous,
+                        ModuleRes.getString(R.string.quick_settings_previous), controller::mediaPrevious)
+                        .also { addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)) }
                     mediaPlayPauseButton = createMediaButton(R.drawable.ic_music_play,
                         ModuleRes.getString(R.string.quick_settings_play_pause), controller::mediaPlayPause).also {
                         addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
                     }
-                    addView(createMediaButton(R.drawable.ic_music_next,
-                        ModuleRes.getString(R.string.quick_settings_next), controller::mediaNext),
-                        LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+                    mediaNextButton = createMediaButton(R.drawable.ic_music_next,
+                        ModuleRes.getString(R.string.quick_settings_next), controller::mediaNext)
+                        .also { addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)) }
                 }, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     0,
@@ -425,6 +429,7 @@ private class QuickSettingsPanelWindow(
 
     private fun renderMediaState(state: QuickSettingsState) {
         mediaArtworkView?.apply {
+            alpha = if (state.mediaAvailable) 1f else 0.52f
             if (state.mediaArtwork != null) {
                 setPadding(0, 0, 0, 0)
                 clearColorFilter()
@@ -439,8 +444,18 @@ private class QuickSettingsPanelWindow(
             if (state.mediaPlaying) R.drawable.ic_music_pause else R.drawable.ic_music_play,
         )?.mutate())
         mediaTitleView?.apply {
-            text = state.mediaTitle.orEmpty()
-            isSelected = !state.mediaTitle.isNullOrBlank()
+            text = when {
+                !state.mediaAvailable -> ModuleRes.getString(R.string.quick_settings_no_media)
+                !state.mediaTitle.isNullOrBlank() -> state.mediaTitle
+                else -> ModuleRes.getString(R.string.quick_settings_media_unknown)
+            }
+            isSelected = state.mediaAvailable && !state.mediaTitle.isNullOrBlank()
+        }
+        listOf(mediaPreviousButton, mediaPlayPauseButton, mediaNextButton).forEach { button ->
+            button?.apply {
+                isEnabled = state.mediaAvailable
+                alpha = if (state.mediaAvailable) 1f else 0.35f
+            }
         }
     }
 

@@ -37,6 +37,7 @@ internal data class QuickSettingsState(
     val brightness: Float,
     val volume: Float,
     val mediaArtwork: Bitmap?,
+    val mediaAvailable: Boolean,
     val mediaTitle: String?,
     val mediaPlaying: Boolean,
 )
@@ -284,6 +285,7 @@ internal class QuickSettingsController(private val context: Context) {
         brightness = readBrightness(),
         volume = readVolume(),
         mediaArtwork = readMediaArtwork(),
+        mediaAvailable = activeMediaController != null,
         mediaTitle = readMediaTitle(),
         mediaPlaying = activeMediaController?.playbackState?.state in PLAYING_MEDIA_STATES,
     )

@@ -227,6 +227,8 @@
     <string name="quick_settings_previous">Previous track</string>
     <string name="quick_settings_play_pause">Play or pause</string>
     <string name="quick_settings_next">Next track</string>
+    <string name="quick_settings_no_media">No media playing</string>
+    <string name="quick_settings_media_unknown">Media playback</string>
     <string name="quick_settings_do_not_disturb">Do not disturb</string>
     <string name="quick_settings_flashlight">Flashlight</string>
     <string name="quick_settings_rotation_lock">Rotation lock</string>
