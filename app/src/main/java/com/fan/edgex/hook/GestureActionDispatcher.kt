@@ -469,7 +469,7 @@ internal class GestureActionDispatcher(
         action == AppConfig.PARTIAL_SCREENSHOT_ACTION -> R.drawable.ic_partial_screenshot
         action == "lock_screen"              -> R.drawable.ic_power
         action == "expand_notifications"     -> R.drawable.ic_notifications
-        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.drawable.ic_wifi
+        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.drawable.ic_quick_settings
         action == "kill_app"                 -> R.drawable.ic_kill_app
         action == "prev_app"                 -> R.drawable.ic_prev_app
         action == "next_app"                 -> R.drawable.ic_next_app
@@ -500,8 +500,8 @@ internal class GestureActionDispatcher(
         action.startsWith("launch_app:")     -> R.drawable.ic_launch_app
         action == AppConfig.SIDE_BAR_LEFT_ACTION -> R.drawable.ic_side_bar_left
         action == AppConfig.SIDE_BAR_RIGHT_ACTION -> R.drawable.ic_side_bar_right
-        action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> R.drawable.ic_wifi
-        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.drawable.ic_wifi
+        action == AppConfig.QUICK_SETTINGS_PANEL_ACTION -> R.drawable.ic_quick_settings
+        action == AppConfig.NATIVE_QUICK_SETTINGS_ACTION -> R.drawable.ic_quick_settings
         action == "toggle_flashlight"            -> R.drawable.ic_flashlight
         action == "toggle_wifi"                  -> R.drawable.ic_wifi
         action == "toggle_mobile_data"           -> R.drawable.ic_mobile_data
