@@ -13,6 +13,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -424,7 +425,7 @@ private class QuickSettingsPanelWindow(
         accent = accent,
         onAccent = onAccent,
         icon = iconResolver.load(icon, fallbackRes),
-        onHaptic = ::emitHaptic,
+        hapticsEnabled = hapticsEnabled,
         onLevelChanged = onLevelChanged,
     ).apply { contentDescription = description }
 
@@ -648,7 +649,7 @@ private class VerticalLevelSlider(
     private val accent: Int,
     private val onAccent: Int,
     private val icon: Drawable?,
-    private val onHaptic: () -> Unit,
+    private val hapticsEnabled: Boolean,
     private val onLevelChanged: (Float) -> Unit,
 ) : View(context) {
     private val density = resources.displayMetrics.density
@@ -738,7 +739,9 @@ private class VerticalLevelSlider(
         val hapticStep = (level * HAPTIC_STEPS).roundToInt()
         if (hapticStep != lastHapticStep) {
             lastHapticStep = hapticStep
-            onHaptic()
+            if (hapticsEnabled) {
+                performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
+            }
         }
         invalidate()
         onLevelChanged(level)
