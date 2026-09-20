@@ -31,8 +31,17 @@ object BrightnessLevelConverter {
     }
 
     fun adjust(brightness: Float, minimum: Float, maximum: Float, increase: Boolean): Float {
+        return adjustByUserLevel(brightness, minimum, maximum, if (increase) ACTION_STEP else -ACTION_STEP)
+    }
+
+    fun adjustByUserLevel(
+        brightness: Float,
+        minimum: Float,
+        maximum: Float,
+        levelDelta: Float,
+    ): Float {
         val level = toUserLevel(brightness, minimum, maximum)
-        val adjustedLevel = (level + if (increase) ACTION_STEP else -ACTION_STEP).coerceIn(0f, 1f)
+        val adjustedLevel = (level + levelDelta).coerceIn(0f, 1f)
         return toDisplayBrightness(adjustedLevel, minimum, maximum)
     }
 

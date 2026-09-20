@@ -54,6 +54,10 @@ object AppActionExecutor {
     }
 
     fun adjustBrightness(context: Context, up: Boolean) {
+        adjustBrightness(context, if (up) BrightnessLevelConverter.ACTION_STEP else -BrightnessLevelConverter.ACTION_STEP)
+    }
+
+    fun adjustBrightness(context: Context, userLevelDelta: Float) {
         try {
             val dm = context.getSystemService("display") as android.hardware.display.DisplayManager
             val get = android.hardware.display.DisplayManager::class.java.getMethod("getBrightness", Int::class.java)
@@ -63,7 +67,11 @@ object AppActionExecutor {
             val info = display?.javaClass?.getMethod("getBrightnessInfo")?.invoke(display)
             val minimum = info?.javaClass?.getField("brightnessMinimum")?.getFloat(info) ?: 0f
             val maximum = info?.javaClass?.getField("brightnessMaximum")?.getFloat(info) ?: 1f
-            set.invoke(dm, 0, BrightnessLevelConverter.adjust(current, minimum, maximum, up))
+            set.invoke(
+                dm,
+                0,
+                BrightnessLevelConverter.adjustByUserLevel(current, minimum, maximum, userLevelDelta),
+            )
         } catch (_: Exception) {}
     }
 

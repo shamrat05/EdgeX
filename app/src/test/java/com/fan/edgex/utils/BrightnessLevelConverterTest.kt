@@ -27,4 +27,12 @@ class BrightnessLevelConverterTest {
         )
         assertTrue(adjusted > current)
     }
+
+    @Test
+    fun continuousAdjustmentUsesTheExactUserLevelDelta() {
+        val current = BrightnessLevelConverter.toDisplayBrightness(0.4f, 0f, 1f)
+        val adjusted = BrightnessLevelConverter.adjustByUserLevel(current, 0f, 1f, 0.015f)
+
+        assertEquals(0.415f, BrightnessLevelConverter.toUserLevel(adjusted, 0f, 1f), 0.0001f)
+    }
 }
