@@ -47,6 +47,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 PremiumPluginLoader.tryLoad()
                 hookInputManager(lpparam)
             }
+            else -> ClipboardInputMethodHook.handleLoadPackage(lpparam)
         }
     }
 
@@ -90,6 +91,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
                             
                             // Process key through KeyManager
                             val context = XposedHelpers.getObjectField(param.thisObject, "mContext") as android.content.Context
+                            ClipboardHook.setSystemContext(context)
                             val consumed = GestureManager.handleKeyEvent(keyEvent, context, param)
                             if (consumed) {
                                 // Return non-zero to consume the key (prevent system handling)
@@ -110,6 +112,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     val event = param.args[0] as InputEvent
                     val context = XposedHelpers.getObjectField(param.thisObject, "mContext")
                         as android.content.Context
+                    ClipboardHook.setSystemContext(context)
 
                     when (event) {
                         is MotionEvent -> {

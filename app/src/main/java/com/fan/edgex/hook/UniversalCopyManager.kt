@@ -19,6 +19,21 @@ object UniversalCopyManager {
     private const val RETRY_COUNT = 3
     private const val RETRY_DELAY_MS = 150L
 
+    internal enum class ImagePasteMode { DIRECT, PATH, MANUAL }
+
+    /** Only terminal fields receive a path; other editable fields use IME rich content. */
+    internal fun imagePasteMode(
+        packageName: String?,
+        @Suppress("UNUSED_PARAMETER") className: String?,
+        editable: Boolean,
+        password: Boolean
+    ): ImagePasteMode {
+        if (password) return ImagePasteMode.MANUAL
+        if (packageName == "com.termux") return ImagePasteMode.PATH
+        if (!editable) return ImagePasteMode.MANUAL
+        return ImagePasteMode.DIRECT
+    }
+
     enum class CollectStatus {
         FOUND,
         NO_TEXT,
@@ -68,13 +83,35 @@ object UniversalCopyManager {
      * AccessibilityNodeInfo ACTION_SET_TEXT. Used for Unicode (e.g. Chinese)
      * where KeyCharacterMap-based key-event injection is not viable.
      */
-    fun injectIntoFocusedField(context: Context, text: String, onComplete: (Boolean) -> Unit) {
+    fun injectIntoFocusedField(
+        context: Context,
+        text: String,
+        prepareClipboardFallback: () -> Boolean,
+        onComplete: (Boolean) -> Unit
+    ) {
         val bridge = getOrCreateService(context)
         if (bridge == null) {
             onComplete(false)
             return
         }
-        bridge.injectIntoFocused(text, onComplete)
+        bridge.injectIntoFocused(text, prepareClipboardFallback, onComplete)
+    }
+
+    /**
+     * Deliver image content through the active IME's InputConnection. The IME
+     * checks the focused editor's MIME types and uses Android's URI-token path.
+     */
+    fun deliverImageIntoFocusedField(
+        context: Context,
+        commitImage: (String?, (Boolean) -> Unit) -> Unit,
+        onComplete: (packageName: String?, hasFocusedField: Boolean, pasted: Boolean) -> Unit
+    ) {
+        val bridge = getOrCreateService(context)
+        if (bridge == null) {
+            onComplete(null, false, false)
+            return
+        }
+        bridge.deliverImageIntoFocused(commitImage, onComplete)
     }
 
     private fun getOrCreateService(context: Context): BridgeAccessibilityService? {
@@ -155,31 +192,125 @@ object UniversalCopyManager {
             }
         }
 
-        fun injectIntoFocused(text: String, onComplete: (Boolean) -> Unit) {
+        fun injectIntoFocused(
+            text: String,
+            prepareClipboardFallback: () -> Boolean,
+            onComplete: (Boolean) -> Unit
+        ) {
             try {
                 if (!accessibilityManager.isEnabled) {
                     setAccessibilityEnabled(true)
                     handler.postDelayed({
-                        runInjection(text, disableAfter = true, onComplete)
+                        runInjection(text, disableAfter = true, prepareClipboardFallback, onComplete)
                     }, RETRY_DELAY_MS)
                     return
                 }
-                runInjection(text, disableAfter = false, onComplete)
+                runInjection(text, disableAfter = false, prepareClipboardFallback, onComplete)
             } catch (t: Throwable) {
                 XposedBridge.log("$TAG: text injection failed: ${t.message}")
                 onComplete(false)
             }
         }
 
-        private fun runInjection(text: String, disableAfter: Boolean, onComplete: (Boolean) -> Unit) {
-            var success = false
+        fun deliverImageIntoFocused(
+            commitImage: (String?, (Boolean) -> Unit) -> Unit,
+            onComplete: (String?, Boolean, Boolean) -> Unit
+        ) {
+            try {
+                if (!accessibilityManager.isEnabled) {
+                    setAccessibilityEnabled(true)
+                    handler.postDelayed({
+                        runImageDelivery(true, commitImage, onComplete)
+                    }, RETRY_DELAY_MS)
+                    return
+                }
+                runImageDelivery(disableAfter = false, commitImage, onComplete)
+            } catch (t: Throwable) {
+                XposedBridge.log("$TAG: image paste setup failed: ${t.javaClass.simpleName}")
+                onComplete(null, false, false)
+            }
+        }
+
+        private fun runImageDelivery(
+            disableAfter: Boolean,
+            commitImage: (String?, (Boolean) -> Unit) -> Unit,
+            onComplete: (String?, Boolean, Boolean) -> Unit
+        ) {
+            var packageName: String? = null
+            var hasFocusedField = false
+            var pasted = false
+            var completed = false
+            var timeout: Runnable? = null
+            fun complete() {
+                if (completed) return
+                completed = true
+                timeout?.let(handler::removeCallbacks)
+                if (disableAfter) setAccessibilityEnabled(false)
+                onComplete(packageName, hasFocusedField, pasted)
+            }
             try {
                 val root = try { getRootInActiveWindow() } catch (_: Throwable) { null }
                 val focused = try {
                     root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                 } catch (_: Throwable) { null }
                 if (focused != null) {
+                    packageName = focused.packageName?.toString()
+                        ?: root?.packageName?.toString()
+                    when (
+                        imagePasteMode(
+                            packageName,
+                            focused.className?.toString(),
+                            focused.isEditable,
+                            focused.isPassword
+                        )
+                    ) {
+                        ImagePasteMode.PATH -> {
+                            hasFocusedField = true
+                            complete()
+                            return
+                        }
+                        ImagePasteMode.MANUAL -> {
+                            complete()
+                            return
+                        }
+                        ImagePasteMode.DIRECT -> hasFocusedField = true
+                    }
+                    commitImage(packageName) { accepted ->
+                        handler.post {
+                            if (completed) return@post
+                            pasted = accepted
+                            complete()
+                        }
+                    }
+                    timeout = Runnable { complete() }
+                    handler.postDelayed(timeout!!, 2_500L)
+                    return
+                }
+            } catch (t: Throwable) {
+                XposedBridge.log("$TAG: image paste action failed: ${t.javaClass.simpleName}")
+            }
+            complete()
+        }
+
+        private fun runInjection(
+            text: String,
+            disableAfter: Boolean,
+            prepareClipboardFallback: () -> Boolean,
+            onComplete: (Boolean) -> Unit
+        ) {
+            var success = false
+            try {
+                val root = try { getRootInActiveWindow() } catch (_: Throwable) { null }
+                val focused = try {
+                    root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                } catch (_: Throwable) { null }
+                if (focused?.isEditable == true) {
                     success = insertAtSelection(focused, text)
+                    if (!success && prepareClipboardFallback()) {
+                        success = runCatching {
+                            focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+                        }.getOrDefault(false)
+                    }
                 }
             } finally {
                 if (disableAfter) setAccessibilityEnabled(false)
@@ -189,6 +320,9 @@ object UniversalCopyManager {
 
         private fun insertAtSelection(node: AccessibilityNodeInfo, text: String): Boolean {
             return try {
+                // Password nodes hide their current value. ACTION_SET_TEXT would
+                // otherwise rebuild from an empty snapshot and erase it.
+                if (node.isPassword) return false
                 val nodeText = node.text?.toString().orEmpty()
                 val hintText = node.hintText?.toString().orEmpty()
                 val current = if (node.isShowingHintText || (hintText.isNotEmpty() && nodeText == hintText)) {

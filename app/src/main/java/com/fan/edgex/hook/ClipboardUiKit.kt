@@ -3,15 +3,18 @@ package com.fan.edgex.hook
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.content.res.ColorStateList
 import android.text.format.DateFormat
+import androidx.annotation.DrawableRes
 import androidx.core.graphics.toColorInt
 import com.fan.edgex.config.AppConfig
 import com.fan.edgex.config.HookConfigSnapshot
 import com.fan.edgex.config.ThemeColorResolver
 import java.util.Calendar
+import java.util.Locale
 
 /**
  * Visual tokens and content heuristics for the clipboard overlay.
@@ -123,6 +126,24 @@ internal object ClipboardUiKit {
     fun ripple(color: Int): RippleDrawable =
         RippleDrawable(ColorStateList.valueOf(color), null, null)
 
+    /**
+     * Cheap per-bind icon loading: the expensive XML inflation happens once per
+     * (resource, tint) pair; every later call only clones the ConstantState and
+     * applies the tint. Each caller gets its own Drawable instance so bounds and
+     * tint never leak between recycled rows.
+     */
+    private val iconStates = HashMap<Long, Drawable.ConstantState?>()
+
+    fun icon(context: Context, @DrawableRes res: Int, tint: Int): Drawable? {
+        val key = (res.toLong() shl 32) or (tint.toLong() and 0xFFFFFFFFL)
+        val state = iconStates.getOrPut(key) {
+            ModuleRes.getDrawable(res, tint)?.constantState
+        } ?: return null
+        return runCatching {
+            state.newDrawable(context.resources)?.mutate()?.also { it.setTint(tint) }
+        }.getOrNull()
+    }
+
     /** Rounded card with border whose ripple is clipped to the rounded shape. */
     fun cardRipple(
         color: Int,
@@ -138,26 +159,24 @@ internal object ClipboardUiKit {
 
     // ── Content classification ─────────────────────────────────────────────
 
-    enum class ClipKind { NOTE, CODE, LINK, EMAIL }
+    enum class ClipKind { NOTE, CODE, LINK, EMAIL, IMAGE }
 
     private val urlRegex = Regex("^(https?://\\S+|www\\.\\S+|[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+/\\S*)$")
     private val bareDomainRegex = Regex("^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+$")
     private val emailRegex = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
 
     private val shellTokens = setOf(
-        "git", "gh", "adb", "npm", "yarn", "pnpm", "pip", "pip3", "python", "python3",
-        "curl", "wget", "sudo", "su", "docker", "kubectl", "gradle", "./gradlew", "ssh",
-        "scp", "cd", "ls", "make", "cargo", "go", "node", "npx", "composer", "apt",
-        "apt-get", "pkg", "echo", "export", "source", "brew", "chmod", "chown", "mkdir",
-        "rm", "cp", "mv", "cat", "grep", "sed", "awk", "tar", "unzip", "kill", "systemctl",
-        "service", "setprop", "getprop", "pm", "am", "input", "dumpsys", "fastboot"
+        "adb", "git", "gh", "cd", "ls", "pwd", "sudo", "su", "npm", "npx", "pnpm", "yarn",
+        "python", "python3", "pip", "pip3", "java", "gradle", "./gradlew", "curl", "wget",
+        "ssh", "scp", "docker", "kubectl", "apt", "apt-get", "pkg", "pm", "am", "cmd",
+        "fastboot", "make", "cargo", "go", "node", "composer", "brew", "chmod", "chown",
+        "mkdir", "rm", "cp", "mv", "cat", "grep", "sed", "awk", "tar", "unzip", "kill",
+        "systemctl", "service", "setprop", "getprop", "dumpsys", "input", "echo", "export"
     )
 
-    private val codeSignals = listOf(
-        "{\n", "}\n", "();", "=>", "->", "def ", "function ", "class ", "import ",
-        "fun ", "val ", "var ", "const ", "let ", "public ", "private ", "return ",
-        "</", "/>", "elif ", "<?php", "SELECT ", "INSERT ", "console.log", "print(",
-        "#include", "std::", "package ", "namespace "
+    private val codeLineStarts = listOf(
+        "def ", "fun ", "class ", "import ", "from ", "package ", "public ", "private ",
+        "function ", "const ", "let ", "var ", "return ", "struct ", "namespace "
     )
 
     fun looksLikeUrl(text: String): Boolean {
@@ -172,26 +191,41 @@ internal object ClipboardUiKit {
         return emailRegex.matches(value)
     }
 
+    /**
+     * Deliberately conservative. Prose is never classified as code merely for
+     * containing ':', '[]', '()', '-', uppercase words, quotes or newlines; it
+     * must either start with a command/shell prompt or contain repeated,
+     * unambiguous programming syntax.
+     */
     fun looksLikeCode(text: String): Boolean {
         val value = text.trim()
         if (value.isEmpty()) return false
-        val firstLine = value.lineSequence().first().trim()
+
+        val lines = value.lines()
+        val firstLine = lines.first().trim()
         if (firstLine.startsWith("$ ") || firstLine.startsWith("> ") ||
-            firstLine.startsWith("#!") || firstLine.startsWith("./")
+            firstLine.startsWith("#!") || firstLine.startsWith("./") ||
+            firstLine.startsWith("sudo ")
         ) {
             return true
         }
-        val firstToken = firstLine.substringBefore(' ').lowercase()
+        val firstToken = firstLine.substringBefore(' ').substringBefore('\t')
+            .lowercase(Locale.ROOT)
         if (firstToken in shellTokens) return true
 
-        val lines = value.lines()
         if (lines.size >= 2) {
-            if (codeSignals.any { value.contains(it) }) return true
-            val terminated = lines.count { line ->
-                val trimmed = line.trimEnd()
-                trimmed.endsWith(";") || trimmed.endsWith("{") || trimmed.endsWith("}")
+            val codeLines = lines.count { line ->
+                val trimmed = line.trim()
+                codeLineStarts.any { trimmed.startsWith(it) } ||
+                        trimmed.endsWith(";") || trimmed.endsWith("{") || trimmed.endsWith("}")
             }
-            if (terminated >= 2) return true
+            if (codeLines >= 2) return true
+            if (value.contains("();") || value.contains("=>") || value.contains("->") ||
+                value.contains("#include") || value.contains("<?php") ||
+                value.contains("std::") || value.contains("</")
+            ) {
+                return true
+            }
         }
         return false
     }

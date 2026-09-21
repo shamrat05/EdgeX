@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Device-protected files dir: where ClipboardImageStore keeps owned images. -->
+    <files-path name="clipboard_images" path="clipboard_images/" />
+    <device-files-path name="device_clipboard_images" path="clipboard_images/" />
+    <!-- Backups (zip archives) exposed for share/restore. -->
+    <files-path name="clipboard_backups" path="clipboard_backups/" />
+    <device-files-path name="device_clipboard_backups" path="clipboard_backups/" />
+</paths>

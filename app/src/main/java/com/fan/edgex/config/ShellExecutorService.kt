@@ -12,7 +12,10 @@ import android.provider.MediaStore
 import com.fan.edgex.IShellCallback
 import com.fan.edgex.IShellExecutor
 import com.topjohnwu.superuser.Shell
+import java.io.File
 import java.io.IOException
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class ShellExecutorService : Service() {
 
@@ -97,6 +100,70 @@ class ShellExecutorService : Service() {
                 }
             }.start()
         }
+
+        override fun createClipboardBackup(
+            manifestJson: String?,
+            imagePaths: MutableList<String>?,
+            archiveName: String?,
+            callback: IShellCallback?,
+        ) {
+            if (!isSystemServerCaller()) {
+                callback?.onResult(false, "caller rejected")
+                return
+            }
+            Thread {
+                var pending: File? = null
+                try {
+                    val manifest = manifestJson
+                        ?.takeIf { it.toByteArray(Charsets.UTF_8).size <= 16 * 1024 * 1024 }
+                        ?: throw IOException("invalid backup manifest")
+                    val name = archiveName
+                        ?.takeIf { BACKUP_NAME.matches(it) }
+                        ?: throw IOException("invalid backup name")
+                    val paths = imagePaths.orEmpty().distinct()
+                    if (paths.size > 100) throw IOException("too many backup images")
+
+                    val directory = File(
+                        createDeviceProtectedStorageContext().filesDir,
+                        "clipboard_backups"
+                    )
+                    if (!directory.isDirectory && !directory.mkdirs()) {
+                        throw IOException("backup directory unavailable")
+                    }
+                    val archive = File(directory, name)
+                    pending = File(directory, "$name.tmp")
+                    pending.delete()
+                    val seenNames = HashSet<String>()
+                    ZipOutputStream(pending.outputStream().buffered()).use { zip ->
+                        zip.putNextEntry(ZipEntry("manifest.json"))
+                        zip.write(manifest.toByteArray(Charsets.UTF_8))
+                        zip.closeEntry()
+                        paths.forEach { path ->
+                            val image = ClipboardImageStore.fileFor(
+                                this@ShellExecutorService,
+                                path
+                            )
+                                ?: throw IOException("invalid backup image")
+                            if (!seenNames.add(image.name)) return@forEach
+                            zip.putNextEntry(ZipEntry("images/${image.name}"))
+                            image.inputStream().buffered().use { it.copyTo(zip) }
+                            zip.closeEntry()
+                        }
+                    }
+                    if (!pending.renameTo(archive)) {
+                        pending.copyTo(archive, overwrite = true)
+                        pending.delete()
+                    }
+                    if (!archive.isFile || archive.length() == 0L) {
+                        throw IOException("backup archive is empty")
+                    }
+                    callback?.onResult(true, archive.absolutePath)
+                } catch (e: Exception) {
+                    pending?.delete()
+                    callback?.onResult(false, "${e.javaClass.simpleName}: ${e.message.orEmpty()}")
+                }
+            }.start()
+        }
     }
 
     override fun onBind(intent: Intent): IBinder = stub
@@ -105,5 +172,9 @@ class ShellExecutorService : Service() {
         val callerUid = Binder.getCallingUid()
         val callerPackages = packageManager.getPackagesForUid(callerUid)
         return callerUid == Process.SYSTEM_UID && callerPackages?.contains("android") == true
+    }
+
+    private companion object {
+        val BACKUP_NAME = Regex("edgex-clipboard-[0-9]{8}-[0-9]{6}-[0-9]{3}\\.zip")
     }
 }

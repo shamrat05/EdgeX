@@ -31,7 +31,7 @@
                 android:value="82" />
         <meta-data
                 android:name="xposedscope"
-                android:value="android" />
+                android:resource="@array/edgex_xposed_scope" />
 
         <activity
                 android:name=".ui.MainActivity"
@@ -167,6 +167,26 @@
         <service
             android:name=".config.ShellExecutorService"
             android:exported="true" />
+
+        <service
+            android:name=".config.ClipboardImageBridgeService"
+            android:exported="true" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.clipboardfiles"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/clipboard_file_paths" />
+        </provider>
+
+        <provider
+            android:name=".config.ClipboardImageProvider"
+            android:authorities="${applicationId}.clipboardimages"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <service
             android:name=".license.KeystoreVerifierService"

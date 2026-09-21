@@ -37,6 +37,19 @@ class ClipboardUiKitTest {
     }
 
     @Test
+    fun `ordinary prose is never classified as code`() {
+        assertFalse(ClipboardUiKit.looksLikeCode("Clarification for clip interactions:"))
+        assertFalse(ClipboardUiKit.looksLikeCode("STOP BEFORE FINAL BUILD."))
+        assertFalse(ClipboardUiKit.looksLikeCode("Here is a list:\n- one\n- two\n- three"))
+        assertFalse(ClipboardUiKit.looksLikeCode("Use the [] and () characters in prose."))
+        assertFalse(ClipboardUiKit.looksLikeCode("The class of 2026 graduates today."))
+        assertFalse(ClipboardUiKit.looksLikeCode("He said \"hello\" -- then left."))
+        assertFalse(
+            ClipboardUiKit.looksLikeCode("Tap an item to paste.\nLong press for options.")
+        )
+    }
+
+    @Test
     fun `classification picks the most specific kind`() {
         assertEquals(ClipboardUiKit.ClipKind.LINK, ClipboardUiKit.classify("https://example.com"))
         assertEquals(ClipboardUiKit.ClipKind.EMAIL, ClipboardUiKit.classify("a@b.co"))

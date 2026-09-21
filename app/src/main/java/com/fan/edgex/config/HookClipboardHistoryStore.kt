@@ -21,6 +21,9 @@ object HookClipboardHistoryStore {
     fun writeForHook(snapshot: ClipboardHistorySnapshot): Boolean =
         write(systemHistoryFile(), snapshot)
 
+    /** Image entries are only surfaced while their owned file still exists. */
+    fun existsChecker(): (String) -> Boolean = { path -> File(path).isFile }
+
     private fun historyFileForHook(): File =
         systemHistoryFile().takeIf { it.isFile && it.canRead() }
             ?: File("/data/user_de/0/${BuildConfig.APPLICATION_ID}/files/$HISTORY_FILE")
@@ -32,7 +35,7 @@ object HookClipboardHistoryStore {
             FileInputStream(file).use(properties::load)
             val values = properties.stringPropertyNames()
                 .associateWith { properties.getProperty(it, "") }
-            ClipboardHistoryCodec.decode(values, maxItems)
+            ClipboardHistoryCodec.decode(values, maxItems, existsChecker())
         }.getOrDefault(ClipboardHistorySnapshot())
     }
 

@@ -409,12 +409,20 @@ internal object PartialScreenshotOverlay {
                 }
                 null
             }
-            XposedHelpers.callStaticMethod(scClass, "capture", params,
-                java.util.concurrent.Executors.newSingleThreadExecutor(), receiver)
-            if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                XposedBridge.log("$TAG capture timed out"); return null
+            val callbackExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+                Thread(task, "EdgeX-ScreenCapture").apply { isDaemon = true }
             }
-            return captureResultObj?.let { hwBufToBitmap(it) }
+            try {
+                XposedHelpers.callStaticMethod(scClass, "capture", params, callbackExecutor, receiver)
+                if (!latch.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    XposedBridge.log("$TAG capture timed out"); return null
+                }
+                return captureResultObj?.let { hwBufToBitmap(it) }
+            } finally {
+                // A fresh executor is needed for each platform capture call,
+                // but its thread must not remain alive after the callback.
+                callbackExecutor.shutdownNow()
+            }
         }.onFailure { XposedBridge.log("$TAG Android16 capture failed: ${it.message}") }
 
         val token = resolveDisplayToken(context) ?: return null
