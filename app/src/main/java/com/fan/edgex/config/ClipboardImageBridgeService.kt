@@ -154,12 +154,12 @@ class ClipboardImageBridgeService : Service() {
                     clipData = ClipData.newUri(
                         contentResolver, label?.take(80).orEmpty().ifBlank { "Image" }, uri
                     )
-                    addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    )
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                startActivity(view)
-                true
+                // Android 15 blocks this background service from launching the
+                // viewer. Grant every resolved viewer access here; system_server
+                // performs the visible launch after this Binder call returns.
+                grantResolvedTargets(view, uri)
             } catch (_: Throwable) {
                 false
             } finally {
@@ -182,12 +182,7 @@ class ClipboardImageBridgeService : Service() {
                         clipData = ClipData.newUri(contentResolver, "Image", uri)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
-                    startActivity(
-                        Intent.createChooser(send, chooserTitle?.take(80)).addFlags(
-                            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        )
-                    )
-                    true
+                    grantResolvedTargets(send, uri)
                 }.getOrDefault(false)
             } finally {
                 Binder.restoreCallingIdentity(identity)
@@ -251,6 +246,18 @@ class ClipboardImageBridgeService : Service() {
             return null
         }
         return uri
+    }
+
+    private fun grantResolvedTargets(intent: Intent, uri: Uri): Boolean {
+        val packages = packageManager.queryIntentActivities(
+            intent,
+            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+        ).asSequence().map { it.activityInfo.packageName }.distinct().toList()
+        if (packages.isEmpty()) return false
+        packages.forEach { packageName ->
+            grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return true
     }
 
     private fun isSystemServerCaller(): Boolean {

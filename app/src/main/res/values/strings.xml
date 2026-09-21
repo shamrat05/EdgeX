@@ -428,6 +428,7 @@
     <string name="clipboard_backup_done">Backed up to %s</string>
     <string name="clipboard_backup_failed">Backup failed</string>
     <string name="clipboard_backup_in_progress">Backup is already in progress</string>
+    <string name="clipboard_restore_in_progress">Restore is already in progress</string>
     <string name="clipboard_backup_empty">Nothing to back up</string>
     <string name="clipboard_no_backups">No backups found</string>
     <string name="clipboard_restore_title">Restore backup</string>

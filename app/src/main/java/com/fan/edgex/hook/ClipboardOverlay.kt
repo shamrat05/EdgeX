@@ -147,7 +147,6 @@ object ClipboardOverlay {
     private var lastContext: Context? = null
     private var autoDismissRunnable: Runnable? = null
     private var undoRunnable: Runnable? = null
-    private var shellRetryRunnable: Runnable? = null
     private var searchRefreshRunnable: Runnable? = null
     private val collapsedSections = mutableSetOf<String>()
     private val selectedClipIds = LinkedHashSet<String>()
@@ -158,22 +157,37 @@ object ClipboardOverlay {
     private val sourceIconLoads = java.util.Collections.synchronizedSet(HashSet<String>())
     private val rowBuildGeneration = AtomicLong(0L)
     private val backupInProgress = AtomicBoolean(false)
+    private val restoreInProgress = AtomicBoolean(false)
 
     // Root shell bridge (app's ShellExecutorService) used only by backup/restore.
     private var shellExecutor: IShellExecutor? = null
     private var shellBound = false
     private var shellContext: Context? = null
-    private var shellAttempts = 0
+    private var activeShellCalls = 0
+    private var shellBindTimeout: Runnable? = null
+    private class PendingShellCall(
+        val run: (IShellExecutor) -> Unit,
+        val unavailable: () -> Unit
+    )
+    private val pendingShellCalls = ArrayDeque<PendingShellCall>()
     private var dismissAnimating = false
 
     private val shellConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             shellExecutor = IShellExecutor.Stub.asInterface(binder)
+            shellBindTimeout?.let(handler::removeCallbacks)
+            shellBindTimeout = null
+            val executor = shellExecutor ?: return
+            while (pendingShellCalls.isNotEmpty()) {
+                val pending = pendingShellCalls.removeFirst()
+                runCatching { pending.run(executor) }.onFailure { pending.unavailable() }
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
             shellExecutor = null
             shellBound = false
+            if (pendingShellCalls.isNotEmpty()) shellContext?.let(::ensureShellService)
         }
     }
 
@@ -1409,8 +1423,6 @@ object ClipboardOverlay {
         rowBuildGeneration.incrementAndGet()
         undoRunnable?.let { handler.removeCallbacks(it) }
         undoRunnable = null
-        shellRetryRunnable?.let { handler.removeCallbacks(it) }
-        shellRetryRunnable = null
         selectedClipIds.clear()
         val current = ui ?: return
         dismissAnimating = false
@@ -2799,6 +2811,8 @@ object ClipboardOverlay {
         }
         context.startActivity(intent)
         true
+    }.onFailure { error ->
+        XposedBridge.log("$TAG: image viewer launch failed: ${error.javaClass.simpleName}")
     }.getOrDefault(false)
 
     /** Opens the image itself, preferring the stable original MediaStore URI. */
@@ -2825,7 +2839,8 @@ object ClipboardOverlay {
                 ClipboardImageStore.displayLabel(context, entry)
             )
         }) { opened ->
-            if (!opened) Toast.makeText(
+            if (opened && tryOpenImage(context, uri, entry.mimeType)) return@withImageBridge
+            Toast.makeText(
                 context, getString(R.string.clipboard_image_missing), Toast.LENGTH_SHORT
             ).show()
         }
@@ -2858,11 +2873,20 @@ object ClipboardOverlay {
         withImageBridge(context, { bridge ->
             bridge.shareImage(uri.toString(), entry.mimeType, getString(R.string.clipboard_share))
         }) { shared ->
-            if (!shared) {
-                Toast.makeText(
-                    context, getString(R.string.clipboard_image_share_failed), Toast.LENGTH_SHORT
-                ).show()
+            if (shared) {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = entry.mimeType?.takeIf { it.startsWith("image/") } ?: "image/*"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    clipData = ClipData.newUri(context.contentResolver, "Image", uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = Intent.createChooser(send, getString(R.string.clipboard_share))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                if (runCatching { context.startActivity(chooser) }.isSuccess) return@withImageBridge
             }
+            Toast.makeText(
+                context, getString(R.string.clipboard_image_share_failed), Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -3156,7 +3180,10 @@ object ClipboardOverlay {
         // while the ZIP is being written, but that must not cancel the export.
         ensureShellService(current.context)
         val snapshot = ClipboardHistorySnapshot(
-            entries = historySnapshot(),
+            entries = historySnapshot().filter { entry ->
+                entry.type != ClipType.IMAGE ||
+                    ClipboardImageStore.fileFor(current.context, entry.imagePath) != null
+            },
             groups = groupsSnapshot(),
             hintDismissed = isHintDismissed()
         )
@@ -3311,6 +3338,10 @@ object ClipboardOverlay {
             getString(R.string.clipboard_restore),
             destructive = true
         ) {
+            if (!restoreInProgress.compareAndSet(false, true)) {
+                showInfoSnackbar(current, getString(R.string.clipboard_restore_in_progress))
+                return@showConfirmDialog
+            }
             val isZip = path.endsWith(".zip")
             val command = if (isZip) {
                 "mkdir -p ${shellQuote(File(restoreTempFile).parent.orEmpty())} && " +
@@ -3325,8 +3356,8 @@ object ClipboardOverlay {
                         "chmod 644 ${shellQuote(restoreTempFile)}"
             }
             runRoot(command) { success, output ->
-                val target = currentUi()
-                if (!success || target == null) {
+                if (!success) {
+                    restoreInProgress.set(false)
                     if (!success) {
                         XposedBridge.log(
                             "$TAG: restore staging failed (zip=$isZip, " +
@@ -3334,27 +3365,31 @@ object ClipboardOverlay {
                         )
                     }
                     currentUi()?.let { showInfoSnackbar(it, getString(R.string.clipboard_restore_failed)) }
+                    if (currentUi() == null) unbindShellService()
                     return@runRoot
                 }
                 ioExecutor.execute {
                     if (isZip) {
-                        val plan = readZipBackupPlan(target.context)
+                        val plan = readZipBackupPlan(current.context)
                         if (plan == null) {
+                            restoreInProgress.set(false)
                             handler.post {
                                 currentUi()?.let {
                                     showInfoSnackbar(it, getString(R.string.clipboard_restore_failed))
                                 }
+                                if (currentUi() == null) unbindShellService()
                             }
                             return@execute
                         }
                         val copyCommand = restoreImageCopyCommand(
-                            plan, ClipboardImageStore.directory(target.context)
+                            plan, ClipboardImageStore.directory(current.context)
                         )
                         if (copyCommand.isEmpty()) {
                             handler.post { finishRestore(plan.snapshot) }
                         } else {
                             runRoot(copyCommand) { copied, output ->
                                 if (copied) finishRestore(plan.snapshot) else {
+                                    restoreInProgress.set(false)
                                     XposedBridge.log(
                                         "$TAG: restore image copy failed " +
                                                 "(error=${output.takeIf { it.isNotBlank() }?.take(160)})"
@@ -3362,6 +3397,7 @@ object ClipboardOverlay {
                                     currentUi()?.let {
                                         showInfoSnackbar(it, getString(R.string.clipboard_restore_failed))
                                     }
+                                    if (currentUi() == null) unbindShellService()
                                 }
                             }
                         }
@@ -3371,9 +3407,11 @@ object ClipboardOverlay {
                             ?.let { jsonToSnapshot(it) }
                         handler.post {
                             if (restored == null) {
+                                restoreInProgress.set(false)
                                 currentUi()?.let {
                                     showInfoSnackbar(it, getString(R.string.clipboard_restore_failed))
                                 }
+                                if (currentUi() == null) unbindShellService()
                             } else {
                                 finishRestore(restored)
                             }
@@ -3428,7 +3466,12 @@ object ClipboardOverlay {
                     .filter { it !in retainedImagePaths && File(it).name.startsWith("clip-restore-") }
                     .forEach { path -> runCatching { File(path).delete() } }
 
-                val current = currentUi() ?: return@post
+                restoreInProgress.set(false)
+                val current = currentUi()
+                if (current == null) {
+                    unbindShellService()
+                    return@post
+                }
                 refreshRows(current)
                 showInfoSnackbar(
                     current,
@@ -3721,16 +3764,56 @@ object ClipboardOverlay {
         shellBound = runCatching {
             context.bindService(intent, shellConnection, Context.BIND_AUTO_CREATE)
         }.getOrDefault(false)
+        if (!shellBound) failPendingShellCalls()
     }
 
     private fun unbindShellService() {
         val context = shellContext ?: return
+        if (pendingShellCalls.isNotEmpty() || activeShellCalls > 0 ||
+            backupInProgress.get() || restoreInProgress.get()
+        ) return
         if (shellBound) {
             runCatching { context.unbindService(shellConnection) }
         }
         shellExecutor = null
         shellBound = false
-        shellAttempts = 0
+        shellContext = null
+        shellBindTimeout?.let(handler::removeCallbacks)
+        shellBindTimeout = null
+    }
+
+    private fun withShellExecutor(
+        context: Context,
+        unavailable: () -> Unit,
+        operation: (IShellExecutor) -> Unit
+    ) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            handler.post { withShellExecutor(context, unavailable, operation) }
+            return
+        }
+        val ready = shellExecutor
+        if (ready != null) {
+            operation(ready)
+            return
+        }
+        pendingShellCalls.addLast(PendingShellCall(operation, unavailable))
+        ensureShellService(context)
+        if (shellBindTimeout == null && pendingShellCalls.isNotEmpty()) {
+            shellBindTimeout = Runnable {
+                shellBindTimeout = null
+                failPendingShellCalls()
+                unbindShellService()
+            }.also { handler.postDelayed(it, 12_000L) }
+        }
+    }
+
+    private fun failPendingShellCalls() {
+        while (pendingShellCalls.isNotEmpty()) pendingShellCalls.removeFirst().unavailable()
+    }
+
+    private fun finishShellCall() {
+        activeShellCalls = (activeShellCalls - 1).coerceAtLeast(0)
+        if (ui == null) unbindShellService()
     }
 
     /** Builds the archive under the app UID, which owns the private image files. */
@@ -3745,69 +3828,65 @@ object ClipboardOverlay {
             onDone(false, "service context unavailable")
             return
         }
-        val executor = shellExecutor
-        if (executor == null) {
-            ensureShellService(context)
-            shellAttempts++
-            if (shellAttempts <= 20) {
-                val retry = Runnable {
-                    createBackupInApp(manifestJson, imagePaths, archiveName, onDone)
-                }
-                shellRetryRunnable = retry
-                handler.postDelayed(retry, 400L)
-            } else {
-                shellRetryRunnable = null
-                shellAttempts = 0
-                onDone(false, "backup service unavailable")
+        withShellExecutor(context, { onDone(false, "backup service unavailable") }) { executor ->
+            activeShellCalls++
+            val finished = AtomicBoolean(false)
+            lateinit var timeout: Runnable
+            fun finish(success: Boolean, output: String) {
+                if (!finished.compareAndSet(false, true)) return
+                handler.removeCallbacks(timeout)
+                finishShellCall()
+                onDone(success, output)
             }
-            return
-        }
-        shellAttempts = 0
-        try {
+            timeout = Runnable { finish(false, "backup service timed out") }
+            handler.postDelayed(timeout, 30_000L)
+            try {
             executor.createClipboardBackup(
                 manifestJson,
                 imagePaths,
                 archiveName,
                 object : IShellCallback.Stub() {
                     override fun onResult(success: Boolean, output: String?) {
-                        handler.post { onDone(success, output.orEmpty()) }
+                        handler.post { finish(success, output.orEmpty()) }
                     }
                 }
             )
-        } catch (t: Throwable) {
-            XposedBridge.log("$TAG: backup service call failed: ${t.javaClass.simpleName}")
-            onDone(false, t.message.orEmpty())
+            } catch (t: Throwable) {
+                XposedBridge.log("$TAG: backup service call failed: ${t.javaClass.simpleName}")
+                finish(false, t.message.orEmpty())
+            }
         }
     }
 
     /** Runs a root shell command through the app's ShellExecutorService. */
     private fun runRoot(command: String, onDone: (Boolean, String) -> Unit) {
-        val context = shellContext ?: ui?.context ?: return
-        val executor = shellExecutor
-        if (executor == null) {
-            ensureShellService(context)
-            shellAttempts++
-            if (shellAttempts <= 8) {
-                val retry = Runnable { runRoot(command, onDone) }
-                shellRetryRunnable = retry
-                handler.postDelayed(retry, 400L)
-            } else {
-                shellRetryRunnable = null
-                shellAttempts = 0
-                onDone(false, "")
-            }
+        val context = shellContext ?: ui?.context
+        if (context == null) {
+            onDone(false, "service context unavailable")
             return
         }
-        shellAttempts = 0
-        try {
+        withShellExecutor(context, { onDone(false, "service unavailable") }) { executor ->
+            activeShellCalls++
+            val finished = AtomicBoolean(false)
+            lateinit var timeout: Runnable
+            fun finish(success: Boolean, output: String) {
+                if (!finished.compareAndSet(false, true)) return
+                handler.removeCallbacks(timeout)
+                finishShellCall()
+                onDone(success, output)
+            }
+            timeout = Runnable { finish(false, "root command timed out") }
+            handler.postDelayed(timeout, 30_000L)
+            try {
             executor.execute(command, true, object : IShellCallback.Stub() {
                 override fun onResult(success: Boolean, output: String?) {
-                    handler.post { onDone(success, output.orEmpty()) }
+                    handler.post { finish(success, output.orEmpty()) }
                 }
             })
-        } catch (t: Throwable) {
-            XposedBridge.log("$TAG: root shell failed: ${t.message}")
-            onDone(false, "")
+            } catch (t: Throwable) {
+                XposedBridge.log("$TAG: root shell failed: ${t.message}")
+                finish(false, t.message.orEmpty())
+            }
         }
     }
 

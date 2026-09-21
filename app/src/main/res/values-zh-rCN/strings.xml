@@ -429,6 +429,7 @@
     <string name="clipboard_backup_done">已备份到 %s</string>
     <string name="clipboard_backup_failed">备份失败</string>
     <string name="clipboard_backup_in_progress">备份正在进行中</string>
+    <string name="clipboard_restore_in_progress">恢复正在进行中</string>
     <string name="clipboard_backup_empty">没有可备份的内容</string>
     <string name="clipboard_no_backups">未找到备份</string>
     <string name="clipboard_restore_title">恢复备份</string>
