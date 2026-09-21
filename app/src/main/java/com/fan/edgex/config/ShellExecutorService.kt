@@ -7,6 +7,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.Process
 import android.provider.MediaStore
 import com.fan.edgex.IShellCallback
@@ -14,6 +15,7 @@ import com.fan.edgex.IShellExecutor
 import com.topjohnwu.superuser.Shell
 import java.io.File
 import java.io.IOException
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -25,7 +27,7 @@ class ShellExecutorService : Service() {
                 callback?.onResult(false, "")
                 return
             }
-            Thread {
+            runProtected("shell") {
                 try {
                     if (runAsRoot) {
                         val result = Shell.cmd(command).exec()
@@ -47,7 +49,7 @@ class ShellExecutorService : Service() {
                 } catch (e: Exception) {
                     callback?.onResult(false, e.message.orEmpty())
                 }
-            }.start()
+            }
         }
 
         override fun savePngToGallery(
@@ -60,7 +62,7 @@ class ShellExecutorService : Service() {
                 png?.close()
                 return
             }
-            Thread {
+            runProtected("gallery") {
                 var insertedUri: android.net.Uri? = null
                 try {
                     if (png == null) throw IOException("PNG pipe is null")
@@ -98,7 +100,7 @@ class ShellExecutorService : Service() {
                     callback?.onResult(false, e.message.orEmpty())
                     png?.close()
                 }
-            }.start()
+            }
         }
 
         override fun createClipboardBackup(
@@ -111,7 +113,7 @@ class ShellExecutorService : Service() {
                 callback?.onResult(false, "caller rejected")
                 return
             }
-            Thread {
+            runProtected("clipboard-backup") {
                 var pending: File? = null
                 try {
                     val manifest = manifestJson
@@ -134,7 +136,11 @@ class ShellExecutorService : Service() {
                     pending = File(directory, "$name.tmp")
                     pending.delete()
                     val seenNames = HashSet<String>()
-                    ZipOutputStream(pending.outputStream().buffered()).use { zip ->
+                    // Clipboard images are already JPEG/PNG/WebP compressed.
+                    // Storing them avoids wasting CPU, battery and time trying
+                    // to recompress bytes that cannot meaningfully shrink.
+                    ZipOutputStream(pending.outputStream().buffered(64 * 1024)).use { zip ->
+                        zip.setLevel(Deflater.NO_COMPRESSION)
                         zip.putNextEntry(ZipEntry("manifest.json"))
                         zip.write(manifest.toByteArray(Charsets.UTF_8))
                         zip.closeEntry()
@@ -146,7 +152,9 @@ class ShellExecutorService : Service() {
                                 ?: throw IOException("invalid backup image")
                             if (!seenNames.add(image.name)) return@forEach
                             zip.putNextEntry(ZipEntry("images/${image.name}"))
-                            image.inputStream().buffered().use { it.copyTo(zip) }
+                            image.inputStream().buffered(64 * 1024).use {
+                                it.copyTo(zip, 64 * 1024)
+                            }
                             zip.closeEntry()
                         }
                     }
@@ -157,16 +165,53 @@ class ShellExecutorService : Service() {
                     if (!archive.isFile || archive.length() == 0L) {
                         throw IOException("backup archive is empty")
                     }
-                    callback?.onResult(true, archive.absolutePath)
+                    val publicDirectory = "/data/media/0/Download/EdgeX"
+                    val publicArchive = "$publicDirectory/$name"
+                    val publicPending = "$publicArchive.tmp"
+                    val exported = Shell.cmd(
+                        "mkdir -p '$publicDirectory' && " +
+                            "rm -f '$publicPending' && " +
+                            "cp -f '${archive.absolutePath}' '$publicPending' && " +
+                            "chmod 0644 '$publicPending' && " +
+                            "mv -f '$publicPending' '$publicArchive' && " +
+                            "test -s '$publicArchive'"
+                    ).exec()
+                    if (!exported.isSuccess) {
+                        val error = exported.err.joinToString("\n").trim()
+                        throw IOException(error.ifEmpty { "backup export failed" })
+                    }
+                    archive.delete()
+                    callback?.onResult(true, "/sdcard/Download/EdgeX/$name")
                 } catch (e: Exception) {
                     pending?.delete()
                     callback?.onResult(false, "${e.javaClass.simpleName}: ${e.message.orEmpty()}")
                 }
-            }.start()
+            }
         }
     }
 
     override fun onBind(intent: Intent): IBinder = stub
+
+    /**
+     * ColorOS freezes ordinary bound app processes after roughly five seconds.
+     * A bounded partial wake lock keeps only the active operation schedulable;
+     * it is released immediately on completion and has a hard timeout.
+     */
+    private fun runProtected(name: String, operation: () -> Unit) {
+        Thread({
+            val power = getSystemService(POWER_SERVICE) as PowerManager
+            val wakeLock = power.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "EdgeX:$name"
+            ).apply { setReferenceCounted(false) }
+            try {
+                wakeLock.acquire(OPERATION_WAKE_LOCK_MS)
+                operation()
+            } finally {
+                if (wakeLock.isHeld) wakeLock.release()
+            }
+        }, "EdgeX-$name").start()
+    }
 
     private fun isSystemServerCaller(): Boolean {
         val callerUid = Binder.getCallingUid()
@@ -175,6 +220,7 @@ class ShellExecutorService : Service() {
     }
 
     private companion object {
+        const val OPERATION_WAKE_LOCK_MS = 60_000L
         val BACKUP_NAME = Regex("edgex-clipboard-[0-9]{8}-[0-9]{6}-[0-9]{3}\\.zip")
     }
 }

@@ -1270,14 +1270,15 @@ object ClipboardOverlay {
         persistLocked()
     }
 
-    /** Removes every unpinned clip; pinned clips are never touched here. */
+    /** Removes only ordinary History clips; grouped and pinned clips stay protected. */
     @Synchronized
-    private fun clearUnpinned(): List<Pair<ClipEntry, Int>> {
+    private fun clearHistory(): List<Pair<ClipEntry, Int>> {
         ensureHistoryLoadedLocked()
         val removed = ArrayList<Pair<ClipEntry, Int>>()
         var index = 0
         while (index < history.size) {
-            if (!history[index].pinned) {
+            val entry = history[index]
+            if (!entry.pinned && entry.group == null) {
                 removed += history.removeAt(index) to index
             } else {
                 index++
@@ -2299,13 +2300,13 @@ object ClipboardOverlay {
                 kindOf = { clipUi(current, it).kind },
                 searchKeyOf = { clipUi(current, it).searchKey }
             )
-            val hasUnpinned = entries.any { !it.pinned }
+            val hasClearableHistory = entries.any { !it.pinned && it.group == null }
             handler.post {
                 if (ui !== current || rowBuildGeneration.get() != requestId) return@post
                 adapter?.submitList(rows)
                 current.countView.text = getString(R.string.clipboard_count, entries.size)
-                current.clearAll.isEnabled = hasUnpinned
-                current.clearAll.alpha = if (hasUnpinned) 1f else 0.4f
+                current.clearAll.isEnabled = hasClearableHistory
+                current.clearAll.alpha = if (hasClearableHistory) 1f else 0.4f
                 if (!preserveScroll) current.recycler.scrollToPosition(0)
                 if (animateTop) fadeFirstRow(current)
             }
@@ -2369,7 +2370,7 @@ object ClipboardOverlay {
 
     private fun onClearAllClicked() {
         val current = ui ?: return
-        val removed = clearUnpinned()
+        val removed = clearHistory()
         clipUiCache.clear()
         refreshRows(current)
         if (removed.isEmpty()) return
@@ -3196,38 +3197,25 @@ object ClipboardOverlay {
         val imagePaths = imageFilesFor(snapshot).values.map(File::getAbsolutePath)
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date())
         val name = "edgex-clipboard-$stamp.zip"
-        createBackupInApp(json, imagePaths, name) { created, internalPath ->
-            if (!created || internalPath.isBlank()) {
-                backupInProgress.set(false)
-                if (currentUi() == null) unbindShellService()
+        createBackupInApp(json, imagePaths, name) { created, backupPath ->
+            backupInProgress.set(false)
+            if (currentUi() == null) unbindShellService()
+            if (!created || backupPath.isBlank()) {
                 XposedBridge.log(
-                    "$TAG: backup archive creation failed in app process" +
-                        (internalPath.takeIf { it.isNotBlank() }?.let { ": ${it.take(160)}" } ?: "")
+                    "$TAG: backup creation failed in app process" +
+                        (backupPath.takeIf { it.isNotBlank() }?.let { ": ${it.take(160)}" } ?: "")
                 )
                 currentUi()?.let {
                     showInfoSnackbar(it, getString(R.string.clipboard_backup_failed))
                 }
                 return@createBackupInApp
             }
-                val destination = "$backupDir/$name"
-                runRoot(
-                    "mkdir -p ${shellQuote(backupDir)} && " +
-                        "cp -f ${shellQuote(internalPath)} ${shellQuote(destination)} && " +
-                        "chmod 644 ${shellQuote(destination)} && test -s ${shellQuote(destination)}"
-                ) { success, output ->
-                    backupInProgress.set(false)
-                    if (currentUi() == null) unbindShellService()
-                    if (!success) {
-                        XposedBridge.log(
-                            "$TAG: backup Download export failed" +
-                                (output.takeIf { it.isNotBlank() }?.let { ": ${it.take(160)}" } ?: "")
-                        )
-                    }
-                    val visible = if (success) "Download/EdgeX/$name" else "internal storage"
-                    currentUi()?.let {
-                        showInfoSnackbar(it, getString(R.string.clipboard_backup_done, visible))
-                    }
-                }
+            currentUi()?.let {
+                showInfoSnackbar(
+                    it,
+                    getString(R.string.clipboard_backup_done, backupPath.removePrefix("/sdcard/"))
+                )
+            }
         }
     }
 
@@ -3762,7 +3750,12 @@ object ClipboardOverlay {
             addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
         }
         shellBound = runCatching {
-            context.bindService(intent, shellConnection, Context.BIND_AUTO_CREATE)
+            context.bindServiceAsUser(
+                intent,
+                shellConnection,
+                Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT,
+                android.os.Process.myUserHandle()
+            )
         }.getOrDefault(false)
         if (!shellBound) failPendingShellCalls()
     }
