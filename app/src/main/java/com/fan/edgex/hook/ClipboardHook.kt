@@ -57,8 +57,15 @@ object ClipboardHook {
         override fun afterHookedMethod(param: MethodHookParam) {
             // Find the ClipData argument regardless of overload signature
             val clip = param.args.firstOrNull { it is ClipData } as? ClipData ?: return
-            val text = extractText(clip)
-            ClipboardOverlay.onClipboardChanged(text)
+            val text = extractText(clip) ?: return
+            // Binder.getCallingUid() still refers to the app that wrote the clip
+            // while the hook runs synchronously on the binder thread.
+            val sourceUid = try {
+                android.os.Binder.getCallingUid()
+            } catch (_: Throwable) {
+                -1
+            }
+            ClipboardOverlay.onClipboardChanged(text, System.currentTimeMillis(), sourceUid)
         }
     }
 

@@ -6,45 +6,43 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.Properties
 
+/**
+ * Clipboard history persistence shared between the EdgeX app process and the
+ * injected system_server hook. The file lives under /data/system/edgex so both
+ * processes can read it; the hook process (uid 1000) writes it atomically.
+ */
 object HookClipboardHistoryStore {
     private const val HISTORY_FILE = "clipboard_history.properties"
     private const val TEMP_FILE = "$HISTORY_FILE.tmp"
-    private const val KEY_VERSION = "__version"
-    private const val KEY_COUNT = "count"
-    private const val ENTRY_PREFIX = "entry."
-    private const val VERSION = "1"
 
-    fun readForHook(maxItems: Int): List<String> =
+    fun readForHook(maxItems: Int): ClipboardHistorySnapshot =
         read(historyFileForHook(), maxItems)
 
-    fun writeForHook(items: List<String>, maxItems: Int): Boolean =
-        write(systemHistoryFile(), items.take(maxItems))
+    fun writeForHook(snapshot: ClipboardHistorySnapshot): Boolean =
+        write(systemHistoryFile(), snapshot)
 
     private fun historyFileForHook(): File =
         systemHistoryFile().takeIf { it.isFile && it.canRead() }
             ?: File("/data/user_de/0/${BuildConfig.APPLICATION_ID}/files/$HISTORY_FILE")
 
-    private fun read(file: File, maxItems: Int): List<String> {
-        if (!file.isFile || !file.canRead()) return emptyList()
+    private fun read(file: File, maxItems: Int): ClipboardHistorySnapshot {
+        if (!file.isFile || !file.canRead()) return ClipboardHistorySnapshot()
         return runCatching {
             val properties = Properties()
             FileInputStream(file).use(properties::load)
-            val count = properties.getProperty(KEY_COUNT, "0").toIntOrNull() ?: 0
-            (0 until count.coerceAtMost(maxItems)).mapNotNull { index ->
-                properties.getProperty("$ENTRY_PREFIX$index")?.takeIf { it.isNotEmpty() }
-            }
-        }.getOrDefault(emptyList())
+            val values = properties.stringPropertyNames()
+                .associateWith { properties.getProperty(it, "") }
+            ClipboardHistoryCodec.decode(values, maxItems)
+        }.getOrDefault(ClipboardHistorySnapshot())
     }
 
-    private fun write(file: File, items: List<String>): Boolean {
+    private fun write(file: File, snapshot: ClipboardHistorySnapshot): Boolean {
         return runCatching {
             file.parentFile?.mkdirs()
 
             val properties = Properties()
-            properties.setProperty(KEY_VERSION, VERSION)
-            properties.setProperty(KEY_COUNT, items.size.toString())
-            items.forEachIndexed { index, text ->
-                properties.setProperty("$ENTRY_PREFIX$index", text)
+            ClipboardHistoryCodec.encode(snapshot).forEach { (key, value) ->
+                properties.setProperty(key, value)
             }
 
             val temp = File(file.parentFile, TEMP_FILE)

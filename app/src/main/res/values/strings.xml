@@ -366,11 +366,53 @@
     <string name="toast_command_error">Command error: %s</string>
 
     <!-- Clipboard Overlay -->
-    <string name="clipboard_overlay_title">CLIPBOARD</string>
+    <string name="clipboard_overlay_title">Clipboard</string>
     <string name="clipboard_empty">Clipboard is empty</string>
+    <string name="clipboard_empty_hint">Copied text will appear here.</string>
+    <string name="clipboard_history_empty">Clipboard history is empty</string>
     <string name="clipboard_paste">Paste</string>
+    <string name="clipboard_copy">Copy</string>
+    <string name="clipboard_copied">Copied</string>
     <string name="clipboard_clear_all">Clear all</string>
     <string name="clipboard_count">%d items</string>
+    <string name="clipboard_search_hint">Search clipboard…</string>
+    <string name="clipboard_clear_search">Clear search</string>
+    <string name="clipboard_no_results">No matching clips</string>
+    <string name="clipboard_pinned">Pinned</string>
+    <string name="clipboard_today">Today</string>
+    <string name="clipboard_yesterday">Yesterday</string>
+    <string name="clipboard_earlier">Earlier</string>
+    <string name="clipboard_history">History</string>
+    <string name="clipboard_pin">Pin</string>
+    <string name="clipboard_unpin">Unpin</string>
+    <string name="clipboard_delete">Delete</string>
+    <string name="clipboard_deleted">Clip deleted</string>
+    <string name="clipboard_cleared">History cleared</string>
+    <string name="clipboard_undo">Undo</string>
+    <string name="clipboard_edit">Edit clip</string>
+    <string name="clipboard_save">Save</string>
+    <string name="clipboard_cancel">Cancel</string>
+    <string name="clipboard_done">Done</string>
+    <string name="clipboard_move_to_group">Move to group</string>
+    <string name="clipboard_remove_from_group">Remove from group</string>
+    <string name="clipboard_new_group">New group…</string>
+    <string name="clipboard_manage_groups">Manage groups</string>
+    <string name="clipboard_rename_group">Rename group</string>
+    <string name="clipboard_delete_group">Delete group</string>
+    <string name="clipboard_delete_group_message">Clips in “%s” will return to normal history.</string>
+    <string name="clipboard_group_name_hint">Group name</string>
+    <string name="clipboard_group_empty">No clips in this group</string>
+    <string name="clipboard_group_actions">Group actions</string>
+    <string name="clipboard_no_groups">No groups yet</string>
+    <string name="clipboard_clear_everything">Clear everything</string>
+    <string name="clipboard_clear_everything_message">This removes pinned clips too. This cannot be undone.</string>
+    <string name="clipboard_more_actions">More actions</string>
+    <string name="clipboard_item_actions">Clip actions</string>
+    <string name="clipboard_hint">Tap an item to paste. Long press for more options.</string>
+    <string name="clipboard_dismiss_hint">Dismiss hint</string>
+    <string name="clipboard_just_now">Just now</string>
+    <string name="clipboard_minutes_ago">%dm ago</string>
+    <string name="clipboard_hours_ago">%dh ago</string>
 
     <!-- Universal Copy Overlay -->
     <string name="copy_tap_to_select">Tap to select</string>
