@@ -1,12 +1,13 @@
 package com.fan.edgex.hook
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
-import android.content.res.ColorStateList
 import android.text.format.DateFormat
 import androidx.annotation.DrawableRes
 import androidx.core.graphics.toColorInt
@@ -123,8 +124,9 @@ internal object ClipboardUiKit {
         cornerRadii = floatArrayOf(radiusPx, radiusPx, radiusPx, radiusPx, 0f, 0f, 0f, 0f)
     }
 
+    /** Bounded touch feedback; a null mask creates an oversized unbounded circle. */
     fun ripple(color: Int): RippleDrawable =
-        RippleDrawable(ColorStateList.valueOf(color), null, null)
+        RippleDrawable(ColorStateList.valueOf(color), null, ColorDrawable(Color.WHITE))
 
     /**
      * Cheap per-bind icon loading: the expensive XML inflation happens once per

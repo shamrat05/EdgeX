@@ -8,10 +8,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.database.ContentObserver
+import android.net.Uri
 import android.os.Binder
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
 import com.fan.edgex.BuildConfig
 import com.fan.edgex.config.ClipboardImageStore
@@ -140,14 +142,18 @@ object ClipboardHook {
     private var shellIdleUnbind: Runnable? = null
 
     private val screenshotLock = Any()
-    private val screenshotSeen = HashSet<Long>()
+    private val screenshotSeen = LinkedHashSet<Long>()
     private val screenshotPending = HashSet<Long>()
     private val screenshotRetries = HashMap<Long, Int>()
+    private val screenshotReadyRetries = HashMap<Long, Int>()
+    private val screenshotRequestedUris = LinkedHashSet<String>()
     @Volatile private var screenshotObserver: ContentObserver? = null
     @Volatile private var contextInitialized = false
     @Volatile private var observerRetryScheduled = false
     @Volatile private var observerRegistrationAttempts = 0
     private var screenshotScanRunnable: Runnable? = null
+    private var screenshotCollectionScanPending = false
+    private var lastTargetedChangeElapsed = 0L
     private val screenshotExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "EdgeX-ScreenshotScan").apply { isDaemon = true }
     }
@@ -182,11 +188,11 @@ object ClipboardHook {
             ) return
             val observer = object : ContentObserver(handler) {
                 override fun onChange(selfChange: Boolean) {
-                    scheduleScreenshotScan(context)
+                    scheduleScreenshotScan(context, null)
                 }
 
-                override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
-                    scheduleScreenshotScan(context)
+                override fun onChange(selfChange: Boolean, uri: Uri?) {
+                    scheduleScreenshotScan(context, uri)
                 }
             }
             try {
@@ -199,7 +205,7 @@ object ClipboardHook {
                 observerRegistrationAttempts = 0
                 XposedBridge.log("$TAG: screenshot MediaStore watcher active")
                 // Covers a screenshot saved just before the first system input registered us.
-                scheduleScreenshotScan(context)
+                scheduleScreenshotScan(context, null)
             } catch (t: Throwable) {
                 observerRegistrationAttempts++
                 XposedBridge.log(
@@ -220,14 +226,15 @@ object ClipboardHook {
     }
 
     /** Finds only recent MediaStore images in screenshot folders or named as screenshots. */
-    private fun scanRecentScreenshots(context: Context) {
+    private fun scanRecentScreenshots(context: Context, changedUri: Uri? = null) {
         val columns = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.MIME_TYPE,
             MediaStore.Images.Media.DATE_ADDED,
             MediaStore.Images.Media.DISPLAY_NAME,
             MediaStore.Images.Media.RELATIVE_PATH,
-            MediaStore.Images.Media.DATA
+            MediaStore.Images.Media.DATA,
+            MediaStore.MediaColumns.IS_PENDING
         )
         val cutoffSeconds = System.currentTimeMillis() / 1000L - SCREENSHOT_LOOKBACK_SECONDS
         val selection = "${MediaStore.Images.Media.DATE_ADDED} >= ? AND " +
@@ -236,7 +243,9 @@ object ClipboardHook {
         val sort = "${MediaStore.Images.Media.DATE_ADDED} DESC"
         try {
             val resolver = context.contentResolver
-            val cursor = try {
+            val cursor = if (changedUri != null) {
+                resolver.query(changedUri, columns, null, null, null)
+            } else try {
                 resolver.query(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     columns,
@@ -268,9 +277,35 @@ object ClipboardHook {
                 val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
                 val relativePathColumn = cursor.getColumnIndex(MediaStore.Images.Media.RELATIVE_PATH)
                 val pathColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATA)
+                val pendingColumn = cursor.getColumnIndex(MediaStore.MediaColumns.IS_PENDING)
                 var checked = 0
-                while (cursor.moveToNext() && checked++ < MAX_SCREENSHOT_SCAN_ROWS) {
+                val rowLimit = if (changedUri == null) MAX_SCREENSHOT_SCAN_ROWS else 1
+                while (cursor.moveToNext() && checked++ < rowLimit) {
                     val id = cursor.getLong(idColumn)
+                    val uri = ContentUris.withAppendedId(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        id
+                    )
+                    if (pendingColumn >= 0 && cursor.getInt(pendingColumn) != 0) {
+                        val retry = synchronized(screenshotLock) {
+                            val count = (screenshotReadyRetries[id] ?: 0) + 1
+                            if (count <= MAX_SCREENSHOT_READY_RETRIES) {
+                                screenshotReadyRetries[id] = count
+                                count
+                            } else {
+                                screenshotReadyRetries.remove(id)
+                                null
+                            }
+                        }
+                        retry?.let { attempt ->
+                            handler.postDelayed(
+                                { scheduleScreenshotScan(context, uri) },
+                                SCREENSHOT_READY_RETRY_DELAY_MS shl (attempt - 1)
+                            )
+                        }
+                        continue
+                    }
+                    synchronized(screenshotLock) { screenshotReadyRetries.remove(id) }
                     val name = cursor.getString(nameColumn)
                     val relativePath = if (relativePathColumn >= 0) {
                         cursor.getString(relativePathColumn).orEmpty()
@@ -281,15 +316,11 @@ object ClipboardHook {
 
                     val mime = cursor.getString(mimeColumn)
                     if (!ClipboardImageStore.isSupported(mime)) continue
-                    val uri = ContentUris.withAppendedId(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                        id
-                    )
                     val timestamp = cursor.getLong(timeColumn) * 1000L
                     if (ClipboardOverlay.attachScreenshotSource(
                             uri.toString(), safeSourcePath, relativePath, name, timestamp
                         )) {
-                        synchronized(screenshotLock) { screenshotSeen.add(id) }
+                        synchronized(screenshotLock) { markScreenshotSeenLocked(id) }
                         continue
                     }
                     val shouldProcess = synchronized(screenshotLock) {
@@ -307,13 +338,18 @@ object ClipboardHook {
                         val retry = synchronized(screenshotLock) {
                             screenshotPending.remove(id)
                             if (stored) {
-                                screenshotSeen.add(id)
+                                markScreenshotSeenLocked(id)
                                 screenshotRetries.remove(id)
                                 null
                             } else {
                                 val count = (screenshotRetries[id] ?: 0) + 1
-                                screenshotRetries[id] = count
-                                count.takeIf { it <= MAX_SCREENSHOT_RETRIES }
+                                if (count <= MAX_SCREENSHOT_RETRIES) {
+                                    screenshotRetries[id] = count
+                                    count
+                                } else {
+                                    screenshotRetries.remove(id)
+                                    null
+                                }
                             }
                         }
                         XposedBridge.log(
@@ -323,7 +359,7 @@ object ClipboardHook {
                         )
                         retry?.let { attempt ->
                             val delay = SCREENSHOT_RETRY_DELAY_MS shl (attempt - 1)
-                            handler.postDelayed({ scheduleScreenshotScan(context) }, delay)
+                            handler.postDelayed({ scheduleScreenshotScan(context, uri) }, delay)
                         }
                     }
                 }
@@ -338,24 +374,66 @@ object ClipboardHook {
         }
     }
 
-    private fun scheduleScreenshotScan(context: Context) {
+    private fun scheduleScreenshotScan(context: Context, changedUri: Uri?) {
+        val itemUri = changedUri?.let(::mediaStoreItemUri)
         val task = object : Runnable {
             override fun run() {
-                val shouldRun = synchronized(screenshotLock) {
+                val work = synchronized(screenshotLock) {
                     if (screenshotScanRunnable !== this) {
-                        false
+                        null
                     } else {
                         screenshotScanRunnable = null
-                        true
+                        val requested = screenshotRequestedUris.toList()
+                        screenshotRequestedUris.clear()
+                        val scanCollection = screenshotCollectionScanPending
+                        screenshotCollectionScanPending = false
+                        requested to scanCollection
                     }
                 }
-                if (shouldRun) screenshotExecutor.execute { scanRecentScreenshots(context) }
+                if (work != null) screenshotExecutor.execute {
+                    val (requested, scanCollection) = work
+                    requested.forEach { scanRecentScreenshots(context, Uri.parse(it)) }
+                    if (requested.isEmpty() && scanCollection) {
+                        scanRecentScreenshots(context)
+                    }
+                }
             }
         }
         synchronized(screenshotLock) {
-            screenshotScanRunnable?.let(handler::removeCallbacks)
+            if (itemUri != null) {
+                screenshotRequestedUris.add(itemUri.toString())
+                lastTargetedChangeElapsed = SystemClock.elapsedRealtime()
+            } else {
+                // Providers may send both collection and exact-item events.
+                // The exact row is cheaper and prevents old screenshots from
+                // becoming a copy backlog behind the newest one.
+                if (SystemClock.elapsedRealtime() - lastTargetedChangeElapsed <
+                    SCREENSHOT_COLLECTION_SUPPRESS_MS
+                ) return
+                screenshotCollectionScanPending = true
+            }
+            if (screenshotScanRunnable != null) return
             screenshotScanRunnable = task
-            handler.postDelayed(task, SCREENSHOT_SCAN_DEBOUNCE_MS)
+            handler.postDelayed(
+                task,
+                if (itemUri == null) SCREENSHOT_COLLECTION_DELAY_MS else 0L
+            )
+        }
+    }
+
+    private fun mediaStoreItemUri(uri: Uri): Uri? {
+        if (uri.authority != MediaStore.AUTHORITY) return null
+        val id = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return null
+        return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+    }
+
+    private fun markScreenshotSeenLocked(id: Long) {
+        screenshotSeen.add(id)
+        while (screenshotSeen.size > MAX_SCREENSHOT_SEEN_IDS) {
+            val iterator = screenshotSeen.iterator()
+            if (!iterator.hasNext()) break
+            iterator.next()
+            iterator.remove()
         }
     }
 
@@ -380,7 +458,7 @@ object ClipboardHook {
             if (attemptsLeft > 0) {
                 handler.postDelayed({
                     runRootShellAttempt(ctx, command, attemptsLeft - 1, onDone)
-                }, 400L)
+                }, SHELL_BIND_RETRY_MS)
             } else {
                 scheduleShellIdleUnbind()
                 onDone(false, "")
@@ -429,7 +507,12 @@ object ClipboardHook {
                 addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
             }
             bound = runCatching {
-                ctx.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+                ctx.bindServiceAsUser(
+                    intent,
+                    connection,
+                    Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT,
+                    android.os.Process.myUserHandle()
+                )
             }.getOrDefault(false)
             if (!bound) context = null
         }
@@ -471,13 +554,18 @@ object ClipboardHook {
             de.robv.android.xposed.XposedHelpers.findClass(name, classLoader)
     }
 
-    private const val SCREENSHOT_LOOKBACK_SECONDS = 120L
-    private const val MAX_SCREENSHOT_SCAN_ROWS = 100
+    private const val SCREENSHOT_LOOKBACK_SECONDS = 15L
+    private const val MAX_SCREENSHOT_SCAN_ROWS = 4
+    private const val MAX_SCREENSHOT_SEEN_IDS = 256
     private const val MAX_SCREENSHOT_RETRIES = 3
+    private const val MAX_SCREENSHOT_READY_RETRIES = 3
     private const val SCREENSHOT_RETRY_DELAY_MS = 800L
-    private const val SCREENSHOT_SCAN_DEBOUNCE_MS = 250L
+    private const val SCREENSHOT_READY_RETRY_DELAY_MS = 80L
+    private const val SCREENSHOT_COLLECTION_DELAY_MS = 40L
+    private const val SCREENSHOT_COLLECTION_SUPPRESS_MS = 500L
     private const val MAX_OBSERVER_REGISTRATION_ATTEMPTS = 3
-    private const val SHELL_BIND_ATTEMPTS = 8
+    private const val SHELL_BIND_ATTEMPTS = 40
+    private const val SHELL_BIND_RETRY_MS = 50L
     private const val SHELL_IDLE_UNBIND_MS = 15_000L
     private const val SHELL_COMMAND_TIMEOUT_MS = 30_000L
 }
