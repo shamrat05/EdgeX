@@ -1417,6 +1417,17 @@ object ClipboardOverlay {
     }
 
     fun dismiss(): Boolean {
+        val current = ui ?: return true
+        try {
+            val wm = current.context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            wm.removeViewImmediate(current.root)
+        } catch (t: Throwable) {
+            XposedBridge.log("$TAG: ClipboardOverlay dismiss failed: ${t.message}")
+            return false
+        }
+
+        // Clear shared dismissal state only after WindowManager has removed the
+        // root; if removal fails, a later dismiss can retry against this UI.
         autoDismissRunnable?.let { handler.removeCallbacks(it) }
         autoDismissRunnable = null
         searchRefreshRunnable?.let { handler.removeCallbacks(it) }
@@ -1425,20 +1436,11 @@ object ClipboardOverlay {
         undoRunnable?.let { handler.removeCallbacks(it) }
         undoRunnable = null
         selectedClipIds.clear()
-        val current = ui ?: return true
         dismissAnimating = false
         ui = null
         adapter = null
         if (!backupInProgress.get()) unbindShellService()
-        var removed = false
-        try {
-            val wm = current.context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            wm.removeViewImmediate(current.root)
-            removed = true
-        } catch (t: Throwable) {
-            XposedBridge.log("$TAG: ClipboardOverlay dismiss failed: ${t.message}")
-        }
-        return removed
+        return true
     }
 
     /** Removes the high-Z root synchronously before dispatching an external Activity. */
