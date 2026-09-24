@@ -1416,7 +1416,7 @@ object ClipboardOverlay {
         }
     }
 
-    fun dismiss() {
+    fun dismiss(): Boolean {
         autoDismissRunnable?.let { handler.removeCallbacks(it) }
         autoDismissRunnable = null
         searchRefreshRunnable?.let { handler.removeCallbacks(it) }
@@ -1425,17 +1425,32 @@ object ClipboardOverlay {
         undoRunnable?.let { handler.removeCallbacks(it) }
         undoRunnable = null
         selectedClipIds.clear()
-        val current = ui ?: return
+        val current = ui ?: return true
         dismissAnimating = false
         ui = null
         adapter = null
         if (!backupInProgress.get()) unbindShellService()
+        var removed = false
         try {
             val wm = current.context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             wm.removeViewImmediate(current.root)
+            removed = true
         } catch (t: Throwable) {
             XposedBridge.log("$TAG: ClipboardOverlay dismiss failed: ${t.message}")
         }
+        return removed
+    }
+
+    /** Removes the high-Z root synchronously before dispatching an external Activity. */
+    private fun dismissThenRunExternal(action: () -> Unit) {
+        if (!dismiss()) {
+            XposedBridge.log("$TAG: external clipboard action skipped because overlay removal failed")
+            return
+        }
+        // removeViewImmediate completes before this next main-loop turn. Keeping
+        // launch dispatch out of the click callback also lets WindowManager
+        // process the removal before system_server starts the target Activity.
+        handler.post(action)
     }
 
     private fun dismissAnimated() {
@@ -3892,6 +3907,7 @@ object ClipboardOverlay {
         @DrawableRes val iconRes: Int? = null,
         val tint: Int? = null,
         val dividerAfter: Boolean = false,
+        val externalAction: Boolean = false,
         val action: (() -> Unit)? = null
     )
 
@@ -3997,18 +4013,21 @@ object ClipboardOverlay {
         if (isImage) {
             items += MenuEntry(
                 label = getString(R.string.clipboard_open_image),
-                iconRes = R.drawable.ic_image
+                iconRes = R.drawable.ic_image,
+                externalAction = true
             ) { openImageEntry(current.context, entry) }
             if (hasOriginalLocation) {
                 items += MenuEntry(
                     label = getString(R.string.clipboard_open_folder),
-                    iconRes = R.drawable.ic_folder
+                    iconRes = R.drawable.ic_folder,
+                    externalAction = true
                 ) { openImageFolder(current.context, entry) }
             }
             if (hasOriginalLocation && isMtManagerImageViewerAvailable(current.context)) {
                 items += MenuEntry(
                     label = getString(R.string.clipboard_open_in_mt_manager),
-                    iconRes = R.drawable.ic_image
+                    iconRes = R.drawable.ic_image,
+                    externalAction = true
                 ) {
                     if (!openOriginalImageInMtManager(current.context, entry)) {
                         Toast.makeText(
@@ -4031,7 +4050,8 @@ object ClipboardOverlay {
         items += MenuEntry(
             label = getString(R.string.clipboard_share),
             iconRes = R.drawable.ic_share,
-            dividerAfter = true
+            dividerAfter = true,
+            externalAction = true
         ) { shareEntry(current.context, entry) }
         items += MenuEntry(
             label = getString(R.string.clipboard_delete),
@@ -4116,7 +4136,12 @@ object ClipboardOverlay {
                 isClickable = true
                 setOnClickListener {
                     closePopup(current)
-                    entry.action?.invoke()
+                    if (entry.externalAction) {
+                        val action = entry.action ?: return@setOnClickListener
+                        dismissThenRunExternal(action)
+                    } else {
+                        entry.action?.invoke()
+                    }
                 }
             }
             entry.iconRes?.let { res ->
