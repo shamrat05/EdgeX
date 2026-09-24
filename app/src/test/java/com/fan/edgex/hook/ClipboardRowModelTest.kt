@@ -91,36 +91,38 @@ class ClipboardRowModelTest {
     }
 
     @Test
-    fun `pinned clips are not duplicated in group or chronological history`() {
+    fun `normal history shows pinned and ungrouped clips but excludes grouped clips`() {
         val entries = listOf(
             ClipEntry("pinned one", pinned = true, group = "Work"),
             ClipEntry("grouped one", group = "Work"),
-            ClipEntry("plain one")
+            ClipEntry("today one", timestamp = 1_700_000_000_000L),
+            ClipEntry("yesterday one", timestamp = 1_699_900_000_000L),
+            ClipEntry("earlier one", timestamp = 1_690_000_000_000L)
         )
         val rows = build(entries, groups = listOf("Work"))
         val texts = clips(rows).map { it.text }
-        assertEquals(listOf("pinned one", "grouped one", "plain one"), texts)
-        assertEquals(3, texts.size)
-        // Pinned clip appears exactly once (in Pinned), grouped once (in Work).
+        assertEquals(listOf("pinned one", "today one", "yesterday one", "earlier one"), texts)
+        assertEquals(4, texts.size)
+        val headers = rows.filterIsInstance<DisplayRow.Header>().map { it.key }
+        assertTrue(headers.contains("pinned"))
+        assertTrue(headers.contains("today"))
+        assertTrue(headers.contains("yesterday"))
+        assertTrue(headers.contains("earlier"))
+        assertFalse(headers.any { it.startsWith("group:") })
         assertEquals(1, texts.count { it == "pinned one" })
-        assertEquals(1, texts.count { it == "grouped one" })
+        assertEquals(0, texts.count { it == "grouped one" })
     }
 
     @Test
-    fun `grouped unpinned clip does not appear in chronological history`() {
+    fun `grouped unpinned clip does not appear in normal history`() {
         val entries = listOf(
             ClipEntry("grouped", group = "Work"),
             ClipEntry("plain")
         )
         val rows = build(entries, groups = listOf("Work"))
         val headers = rows.filterIsInstance<DisplayRow.Header>().map { it.key }
-        assertTrue(headers.contains("group:Work"))
-        // The grouped clip sits under the group header, not Today/Yesterday/Earlier.
-        val plainIndex = rows.indexOfFirst { it is DisplayRow.Clip && it.text == "plain" }
-        val groupedIndex = rows.indexOfFirst { it is DisplayRow.Clip && it.text == "grouped" }
-        val workHeader = rows.indexOfFirst { it is DisplayRow.Header && it.key == "group:Work" }
-        assertTrue(groupedIndex > workHeader)
-        assertTrue(plainIndex > groupedIndex)
+        assertFalse(headers.any { it.startsWith("group:") })
+        assertEquals(listOf("plain"), clips(rows).map { it.text })
     }
 
     @Test
@@ -153,8 +155,8 @@ class ClipboardRowModelTest {
         assertEquals(3, clips(rows).size)
         val headers = rows.filterIsInstance<DisplayRow.Header>().map { it.key }
         assertTrue(headers.contains("search:pinned"))
-        assertTrue(headers.contains("search:group:Code"))
         assertTrue(headers.contains("search:other"))
+        assertEquals(listOf("repo pinned", "repo grouped", "repo plain"), clips(rows).map { it.text })
         assertFalse(headers.any { it.contains("empty") })
     }
 
@@ -185,10 +187,25 @@ class ClipboardRowModelTest {
     }
 
     @Test
-    fun `empty user group still renders a manageable header`() {
+    fun `empty user group is represented by tray empty state not normal history`() {
         val rows = build(listOf(ClipEntry("plain")), groups = listOf("Empty"))
-        val header = rows.filterIsInstance<DisplayRow.Header>().single { it.key == "group:Empty" }
-        assertEquals(0, header.count)
-        assertTrue(rows.any { it is DisplayRow.Message && it.title == "Empty group" })
+        assertFalse(rows.filterIsInstance<DisplayRow.Header>().any { it.key == "group:Empty" })
+        val groupRows = ClipboardRowModel.buildGroup(
+            entries = listOf(ClipEntry("plain")), group = "Empty", emptyMessage = "Empty group",
+            metaOf = meta, kindOf = kind
+        )
+        assertEquals(1, groupRows.size)
+        assertEquals("Empty group", (groupRows.single() as DisplayRow.Message).title)
+    }
+
+    @Test
+    fun `group tray excludes pinned members already shown in pinned section`() {
+        val entries = listOf(
+            ClipEntry("work one", group = "Work"),
+            ClipEntry("pinned work", pinned = true, group = "Work"),
+            ClipEntry("code", group = "Code")
+        )
+        val rows = ClipboardRowModel.buildGroup(entries, "Work", "Empty", meta, kind)
+        assertEquals(listOf("work one"), clips(rows).map { it.text })
     }
 }

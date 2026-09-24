@@ -203,6 +203,13 @@ object ClipboardOverlay {
         val search: EditText,
         val searchClear: View,
         val recycler: RecyclerView,
+        val groupTray: LinearLayout,
+        val groupHeaderTitle: TextView,
+        val groupHeaderCount: TextView,
+        val groupHeaderMenu: ImageView,
+        val groupHeaderChevron: ImageView,
+        val groupRecycler: RecyclerView,
+        val groupDock: RecyclerView,
         val countView: TextView,
         val clearAll: TextView,
         val selectionBar: LinearLayout,
@@ -221,6 +228,7 @@ object ClipboardOverlay {
         var popup: View? = null
         var snackbar: View? = null
         var onBackPressed: (() -> Boolean)? = null
+        var expandedGroup: String? = null
         var editorLayoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
         var lastWidth: Int = context.resources.displayMetrics.widthPixels
         var lastHeight: Int = context.resources.displayMetrics.heightPixels
@@ -263,12 +271,80 @@ object ClipboardOverlay {
         val secondary: TextView
     ) : RecyclerView.ViewHolder(root)
 
+    private data class GroupDockItem(val name: String, val count: Int)
+
+    private class GroupDockAdapter(
+        private val current: () -> OverlayUi?,
+        private val onSelect: (String) -> Unit
+    ) : ListAdapter<GroupDockItem, GroupDockAdapter.Holder>(
+        object : DiffUtil.ItemCallback<GroupDockItem>() {
+            override fun areItemsTheSame(old: GroupDockItem, new: GroupDockItem) = old.name == new.name
+            override fun areContentsTheSame(old: GroupDockItem, new: GroupDockItem) = old == new
+        }
+    ) {
+        inner class Holder(val root: LinearLayout, val icon: ImageView, val title: TextView, val count: TextView) :
+            RecyclerView.ViewHolder(root) { var item: GroupDockItem? = null }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+            val ui = current() ?: error("clipboard UI unavailable")
+            val context = parent.context
+            val icon = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_INSIDE }
+            val title = TextView(context).apply {
+                textSize = 12.5f
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setTextColor(ui.palette.textPrimary)
+            }
+            val count = TextView(context).apply {
+                textSize = 10f
+                maxLines = 1
+                setTextColor(ui.palette.textSecondary)
+                setPaddingRelative(ui.dp(5), 0, ui.dp(5), 0)
+                background = ClipboardUiKit.rounded(ui.palette.raised, ui.dp(8).toFloat())
+            }
+            val root = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                isFocusable = true
+                setPaddingRelative(ui.dp(10), 0, ui.dp(10), 0)
+                background = ClipboardUiKit.ripple(rippleColor(ui.palette))
+                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(42))
+                addView(icon, LinearLayout.LayoutParams(ui.dp(16), ui.dp(16)))
+                addView(title, LinearLayout.LayoutParams(ui.dp(104), ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .apply { marginStart = ui.dp(6) })
+                addView(count, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(18))
+                    .apply { marginStart = ui.dp(5) })
+            }
+            val holder = Holder(root, icon, title, count)
+            root.setOnClickListener { holder.item?.let { onSelect(it.name) } }
+            return holder
+        }
+
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            val item = getItem(position)
+            holder.item = item
+            val ui = current() ?: return
+            holder.icon.setImageDrawable(ClipboardUiKit.icon(holder.root.context, R.drawable.ic_folder, ui.palette.accent))
+            holder.title.text = item.name
+            holder.count.text = item.count.toString()
+            val selected = ui.expandedGroup == item.name
+            holder.root.background = if (selected) {
+                ClipboardUiKit.rounded(ui.palette.accentAlpha(0.14f), ui.dp(12).toFloat(), ui.dp(1), ui.palette.accentAlpha(0.28f))
+            } else ClipboardUiKit.ripple(rippleColor(ui.palette))
+        }
+    }
+
     /**
      * ListAdapter = AsyncListDiffer: diffs run on a background executor and the
      * adapter only rebinds rows that actually changed. Stable ids are a
      * deterministic 64-bit hash of [DisplayRow.stableKey].
      */
-    private class ClipAdapter : ListAdapter<DisplayRow, RecyclerView.ViewHolder>(CLIP_DIFF) {
+    private class ClipAdapter(
+        private val boundUi: OverlayUi? = null
+    ) : ListAdapter<DisplayRow, RecyclerView.ViewHolder>(CLIP_DIFF) {
+
+        private fun actionUi(): OverlayUi? = boundUi ?: currentUi()
 
         init {
             setHasStableIds(true)
@@ -293,7 +369,11 @@ object ClipboardOverlay {
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             val row = currentList[position]
-            val current = currentUi() ?: return
+            val current = boundUi ?: currentUi() ?: return
+            bindForUi(holder, row, current)
+        }
+
+        fun bindForUi(holder: RecyclerView.ViewHolder, row: DisplayRow, current: OverlayUi) {
             when (holder) {
                 is HeaderHolder -> if (row is DisplayRow.Header) bindHeader(holder, row, current)
                 is ClipHolder -> if (row is DisplayRow.Clip) bindClip(holder, row, current)
@@ -390,12 +470,12 @@ object ClipboardOverlay {
             val root = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPaddingRelative(dp(8), dp(6), dp(2), dp(6))
+                setPaddingRelative(dp(8), dp(4), dp(2), dp(4))
                 isClickable = true
                 isFocusable = true
                 layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = dp(5) }
+                ).apply { bottomMargin = dp(3) }
             }
             val iconColumn = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -421,14 +501,14 @@ object ClipboardOverlay {
             )
             val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
             val text = TextView(context).apply {
-                textSize = 14.5f
+                textSize = 13.5f
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-                setLineSpacing(dp(2).toFloat(), 1f)
+                setLineSpacing(dp(1).toFloat(), 1f)
             }
             column.addView(text)
             val meta = TextView(context).apply {
-                textSize = 11.5f
+                textSize = 10.75f
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
             }
@@ -487,7 +567,7 @@ object ClipboardOverlay {
             }
             root.setOnClickListener {
                 val row = holder.bound ?: return@setOnClickListener
-                val current = currentUi() ?: return@setOnClickListener
+                val current = actionUi() ?: return@setOnClickListener
                 if (selectedClipIds.isNotEmpty()) {
                     toggleClipSelection(current, row)
                 } else if (row.isImage) {
@@ -500,22 +580,22 @@ object ClipboardOverlay {
                 val row = holder.bound
                 if (row != null) {
                     root.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                    currentUi()?.let { toggleClipSelection(it, row) }
+                    actionUi()?.let { toggleClipSelection(it, row) }
                 }
                 true
             }
             pin.setOnClickListener {
-                holder.bound?.let { row -> currentUi()?.let { togglePinAndRefresh(it, row.entry) } }
+                holder.bound?.let { row -> actionUi()?.let { togglePinAndRefresh(it, row.entry) } }
             }
             copy.setOnClickListener {
                 holder.bound?.let { row ->
-                    currentUi()?.let {
+                    actionUi()?.let {
                         if (row.isImage) copyImageEntry(it, row.entry) else copyEntry(it, row.text)
                     }
                 }
             }
             more.setOnClickListener {
-                holder.bound?.let { row -> currentUi()?.let { showItemMenu(it, more, row.entry) } }
+                holder.bound?.let { row -> actionUi()?.let { showItemMenu(it, more, row.entry) } }
             }
             return holder
         }
@@ -664,13 +744,15 @@ object ClipboardOverlay {
                 sourceIconLoads.remove(packageName)
                 handler.post {
                     val loaded = synchronized(sourceIconCache) { sourceIconCache[packageName] }
-                    for (index in 0 until current.recycler.childCount) {
-                        val visibleHolder = current.recycler.getChildViewHolder(
-                            current.recycler.getChildAt(index)
-                        ) as? ClipHolder ?: continue
-                        val visibleUid = visibleHolder.bound?.entry?.sourceUid ?: continue
-                        if (visibleHolder.sourceIcon.tag == packageName) {
-                            applySourceIcon(visibleHolder, visibleUid, packageName, loaded)
+                    listOf(current.recycler, current.groupRecycler).forEach { recycler ->
+                        for (index in 0 until recycler.childCount) {
+                            val visibleHolder = recycler.getChildViewHolder(
+                                recycler.getChildAt(index)
+                            ) as? ClipHolder ?: continue
+                            val visibleUid = visibleHolder.bound?.entry?.sourceUid ?: continue
+                            if (visibleHolder.sourceIcon.tag == packageName) {
+                                applySourceIcon(visibleHolder, visibleUid, packageName, loaded)
+                            }
                         }
                     }
                 }
@@ -1541,6 +1623,8 @@ object ClipboardOverlay {
                             }
                         } else if (current.keyboardVisible) {
                             hideKeyboard(current)
+                        } else if (current.expandedGroup != null) {
+                            collapseGroupTray(current)
                         } else if (selectedClipIds.isNotEmpty()) {
                             clearClipSelection(current)
                         } else {
@@ -1583,6 +1667,13 @@ object ClipboardOverlay {
                 search = EditText(context),
                 searchClear = View(context),
                 recycler = RecyclerView(ModuleRes.contextWithModuleResources(context)),
+                groupTray = LinearLayout(context),
+                groupHeaderTitle = TextView(context),
+                groupHeaderCount = TextView(context),
+                groupHeaderMenu = ImageView(context),
+                groupHeaderChevron = ImageView(context),
+                groupRecycler = RecyclerView(context),
+                groupDock = RecyclerView(context),
                 countView = TextView(context),
                 clearAll = TextView(context),
                 selectionBar = LinearLayout(context),
@@ -1621,6 +1712,13 @@ object ClipboardOverlay {
             search = built.search,
             searchClear = built.searchClear,
             recycler = built.recycler,
+            groupTray = built.groupTray,
+            groupHeaderTitle = built.groupHeaderTitle,
+            groupHeaderCount = built.groupHeaderCount,
+            groupHeaderMenu = built.groupHeaderMenu,
+            groupHeaderChevron = built.groupHeaderChevron,
+            groupRecycler = built.groupRecycler,
+            groupDock = built.groupDock,
             countView = built.countView,
             clearAll = built.clearAll,
             selectionBar = built.selectionBar,
@@ -1633,6 +1731,8 @@ object ClipboardOverlay {
         val newAdapter = ClipAdapter()
         adapter = newAdapter
         built.recycler.adapter = newAdapter
+        built.groupRecycler.adapter = ClipAdapter(newUi)
+        built.groupDock.adapter = GroupDockAdapter({ currentUi() }) { name -> toggleGroupTray(newUi, name) }
         built.selectionPaste.setOnClickListener { pasteSelectedClips(newUi) }
         built.selectionCancel.setOnClickListener { clearClipSelection(newUi) }
         ItemTouchHelper(buildSwipeCallback()).attachToRecyclerView(built.recycler)
@@ -1798,6 +1898,13 @@ object ClipboardOverlay {
         val search: EditText,
         val searchClear: View,
         val recycler: RecyclerView,
+        val groupTray: LinearLayout,
+        val groupHeaderTitle: TextView,
+        val groupHeaderCount: TextView,
+        val groupHeaderMenu: ImageView,
+        val groupHeaderChevron: ImageView,
+        val groupRecycler: RecyclerView,
+        val groupDock: RecyclerView,
         val countView: TextView,
         val clearAll: TextView,
         val selectionBar: LinearLayout,
@@ -2067,9 +2174,85 @@ object ClipboardOverlay {
         sheet.addView(
             recycler,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
             )
         )
+
+        val groupTray = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            clipToPadding = true
+            background = ClipboardUiKit.rounded(palette.raised, dp(14).toFloat(), dp(1), palette.border)
+        }
+        val trayHeader = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPaddingRelative(dp(10), 0, dp(4), 0)
+        }
+        val trayTitle = TextView(context).apply {
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(palette.textPrimary)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        trayHeader.addView(trayTitle, LinearLayout.LayoutParams(0, dp(42), 1f))
+        val trayCount = TextView(context).apply {
+            textSize = 11f
+            setTextColor(palette.textSecondary)
+        }
+        trayHeader.addView(trayCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { marginEnd = dp(3) })
+        val trayMenu = actionIcon(context, R.drawable.ic_more_vert, palette, palette.iconMuted, dp(38), dp(40), getString(R.string.clipboard_group_actions)) { }
+        trayHeader.addView(trayMenu)
+        val trayChevron = actionIcon(context, R.drawable.ic_expand_more, palette, palette.iconMuted, dp(38), dp(40), getString(R.string.clipboard_collapse)) { }
+        trayHeader.addView(trayChevron)
+        groupTray.addView(trayHeader, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)))
+        val groupRecycler = object : RecyclerView(recyclerContext) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                val cap = currentUi()?.let { ui ->
+                    (((ui.sheet.height - ui.dp(178)).coerceAtLeast(ui.dp(100)) * 0.40f).toInt() - ui.dp(42))
+                        .coerceAtLeast(ui.dp(52))
+                } ?: MeasureSpec.getSize(heightMeasureSpec)
+                super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(cap, MeasureSpec.AT_MOST))
+            }
+        }.apply {
+            layoutManager = LinearLayoutManager(recyclerContext)
+            itemAnimator = null
+            overScrollMode = View.OVER_SCROLL_NEVER
+            clipToPadding = false
+            setPaddingRelative(dp(10), dp(2), dp(10), dp(5))
+        }
+        groupTray.addView(groupRecycler, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        sheet.addView(groupTray, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40))
+            .apply { marginStart = dp(14); marginEnd = dp(14); bottomMargin = dp(5) })
+
+        val dockWrap = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPaddingRelative(dp(8), dp(5), dp(8), dp(5))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(palette.sheet)
+                setStroke(dp(1), palette.border)
+            }
+        }
+        val groupDock = RecyclerView(recyclerContext).apply {
+            layoutManager = LinearLayoutManager(recyclerContext, RecyclerView.HORIZONTAL, false)
+            itemAnimator = null
+            overScrollMode = View.OVER_SCROLL_NEVER
+            setHasFixedSize(true)
+        }
+        dockWrap.addView(groupDock, LinearLayout.LayoutParams(0, dp(44), 1f))
+        val addGroup = actionIcon(context, R.drawable.ic_add, palette, palette.accent, dp(42), dp(44), getString(R.string.clipboard_new_group)) { }
+        dockWrap.addView(addGroup)
+        sheet.addView(dockWrap, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)))
+        addGroup.setOnClickListener { currentUi()?.let { showGroupNameDialog(it, null) } }
+        trayMenu.setOnClickListener {
+            val current = currentUi() ?: return@setOnClickListener
+            current.expandedGroup?.let { showGroupMenu(current, it, trayMenu) }
+        }
+        trayChevron.setOnClickListener { currentUi()?.let(::collapseGroupTray) }
+        trayHeader.setOnClickListener { currentUi()?.let(::collapseGroupTray) }
 
         // ── First-run hint ─────────────────────────────────────────────────────
         val hintBar: View?
@@ -2080,6 +2263,7 @@ object ClipboardOverlay {
             }
             sheet.addView(
                 hintBar,
+                sheet.indexOfChild(groupTray),
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
                 ).apply {
@@ -2103,6 +2287,7 @@ object ClipboardOverlay {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
                 searchClear.visibility = if (s.isNullOrEmpty()) View.GONE else View.VISIBLE
+                if (!s.isNullOrEmpty()) currentUi()?.let(::collapseGroupTray)
                 // Debounce fast key repeats; row filtering runs on the row worker.
                 scheduleSearchRefresh()
                 resetAutoDismiss()
@@ -2114,6 +2299,13 @@ object ClipboardOverlay {
             search = search,
             searchClear = searchClear,
             recycler = recycler,
+            groupTray = groupTray,
+            groupHeaderTitle = trayTitle,
+            groupHeaderCount = trayCount,
+            groupHeaderMenu = trayMenu,
+            groupHeaderChevron = trayChevron,
+            groupRecycler = groupRecycler,
+            groupDock = groupDock,
             countView = countView,
             clearAll = clearAll,
             selectionBar = selectionBar,
@@ -2297,7 +2489,13 @@ object ClipboardOverlay {
             history.toList() to groups.toList()
         }
         val query = current.search.text?.toString().orEmpty()
+        val expandedGroup = current.expandedGroup
         val collapsed = collapsedSections.toSet()
+        if (query.isNotBlank() && current.expandedGroup != null) {
+            current.expandedGroup = null
+            current.groupTray.visibility = View.GONE
+            current.groupTray.alpha = 1f
+        }
         val rowLabels = labels()
         if (selectedClipIds.retainAll(entries.mapTo(HashSet()) { it.id })) {
             updateSelectionUi(current)
@@ -2318,9 +2516,27 @@ object ClipboardOverlay {
                 searchKeyOf = { clipUi(current, it).searchKey }
             )
             val hasClearableHistory = entries.any { !it.pinned && it.group == null }
+            val trayRows = expandedGroup?.let { group ->
+                ClipboardRowModel.buildGroup(
+                    entries = entries,
+                    group = group,
+                    emptyMessage = getString(R.string.clipboard_group_empty),
+                    metaOf = { clipUi(current, it).meta },
+                    kindOf = { clipUi(current, it).kind }
+                )
+            }
             handler.post {
                 if (ui !== current || rowBuildGeneration.get() != requestId) return@post
                 adapter?.submitList(rows)
+                updateGroupDock(current, entries, groupNames)
+                if (current.expandedGroup !in groupNames) collapseGroupTray(current)
+                trayRows?.let {
+                    if (current.expandedGroup == expandedGroup) {
+                        current.groupHeaderTitle.text = expandedGroup
+                        current.groupHeaderCount.text = entries.count { !it.pinned && it.group == expandedGroup }.toString()
+                        (current.groupRecycler.adapter as? ClipAdapter)?.submitList(it) { resizeGroupTray(current) }
+                    }
+                }
                 current.countView.text = getString(R.string.clipboard_count, entries.size)
                 current.clearAll.isEnabled = hasClearableHistory
                 current.clearAll.alpha = if (hasClearableHistory) 1f else 0.4f
@@ -2328,6 +2544,66 @@ object ClipboardOverlay {
                 if (animateTop) fadeFirstRow(current)
             }
         }
+    }
+
+    private fun updateGroupDock(current: OverlayUi, entries: List<ClipEntry>, names: List<String>) {
+        val items = names.map { name -> GroupDockItem(name, entries.count { !it.pinned && it.group == name }) }
+        (current.groupDock.adapter as? GroupDockAdapter)?.submitList(items)
+    }
+
+    private fun toggleGroupTray(current: OverlayUi, group: String) {
+        if (current.search.text?.isNotEmpty() == true) {
+            current.search.text.clear()
+            current.expandedGroup = null
+        }
+        if (current.expandedGroup == group) {
+            collapseGroupTray(current)
+            return
+        }
+        val wasClosed = current.expandedGroup == null
+        current.expandedGroup = group
+        current.groupTray.visibility = View.VISIBLE
+        (current.groupDock.adapter as? GroupDockAdapter)?.notifyDataSetChanged()
+        current.groupHeaderTitle.text = group
+        current.groupHeaderChevron.rotation = 180f
+        current.groupTray.animate().cancel()
+        if (wasClosed) {
+            current.groupTray.alpha = 0f
+            current.groupTray.animate().alpha(1f).setDuration(150L).start()
+        }
+        refreshRows(current, preserveScroll = true)
+        current.sheet.post { resizeGroupTray(current) }
+    }
+
+    private fun collapseGroupTray(current: OverlayUi) {
+        if (current.expandedGroup == null) return
+        current.expandedGroup = null
+        (current.groupDock.adapter as? GroupDockAdapter)?.notifyDataSetChanged()
+        current.groupTray.animate().cancel()
+        current.groupTray.animate().alpha(0f).setDuration(120L).withEndAction {
+            if (ui === current && current.expandedGroup == null) {
+                current.groupTray.visibility = View.GONE
+                current.groupTray.alpha = 1f
+                current.groupTray.layoutParams = current.groupTray.layoutParams.apply { height = current.dp(40) }
+                current.sheet.requestLayout()
+            }
+        }.start()
+    }
+
+    private fun resizeGroupTray(current: OverlayUi) {
+        if (current.expandedGroup == null || current.sheet.height <= 0) return
+        val available = (current.sheet.height - current.dp(178)).coerceAtLeast(current.dp(100))
+        val cap = (available * 0.40f).toInt().coerceAtLeast(current.dp(94))
+        val adapter = current.groupRecycler.adapter as? ClipAdapter
+        val rows = adapter?.itemCount ?: 0
+        val desiredContent = when {
+            rows <= 1 && (adapter?.currentList?.firstOrNull() is DisplayRow.Message) -> current.dp(66)
+            else -> (rows.coerceAtMost(4) * current.dp(58) + current.dp(8))
+        }
+        val target = (current.dp(42) + desiredContent).coerceAtMost(cap)
+            .coerceAtLeast(current.dp(94))
+        current.groupTray.layoutParams = current.groupTray.layoutParams.apply { height = target }
+        current.sheet.requestLayout()
     }
 
     private fun scheduleSearchRefresh() {
@@ -3982,6 +4258,7 @@ object ClipboardOverlay {
                         destructive = true
                     ) {
                         deleteGroup(name)
+                        if (current.expandedGroup == name) collapseGroupTray(current)
                         refreshRows(current)
                     }
                 }
@@ -4424,6 +4701,13 @@ object ClipboardOverlay {
                     }
                     if (ok) {
                         if (moveEntryText != null) moveToGroup(moveEntryText, name)
+                        if (existingName != null && current.expandedGroup == existingName) {
+                            current.expandedGroup = name
+                        }
+                        if (existingName == null && moveEntryText == null) {
+                            current.expandedGroup = name
+                            current.groupTray.visibility = View.VISIBLE
+                        }
                         refreshRows(current)
                     }
                 }
@@ -4751,6 +5035,7 @@ object ClipboardOverlay {
                         destructive = true
                     ) {
                         deleteGroup(name)
+                        if (current.expandedGroup == name) collapseGroupTray(current)
                         showManageGroupsDialog(current)
                         refreshRows(current)
                     }

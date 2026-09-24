@@ -114,7 +114,7 @@ internal object ClipboardRowModel {
         now: Long = System.currentTimeMillis(),
         zone: TimeZone = TimeZone.getDefault()
     ): List<DisplayRow> {
-        val rows = ArrayList<DisplayRow>(entries.size + groups.size + 4)
+        val rows = ArrayList<DisplayRow>(entries.size + 4)
         if (entries.isEmpty()) {
             rows += DisplayRow.Message(labels.empty, labels.emptyHint, RowIcon.CLIPBOARD)
             return rows
@@ -131,16 +131,8 @@ internal object ClipboardRowModel {
                 rows, "search:pinned", RowIcon.PIN, labels.pinned,
                 matches.filter { it.pinned }, collapsed, metaOf, kindOf
             )
-            groups.forEach { name ->
-                val items = matches.filter { !it.pinned && it.group == name }
-                if (items.isNotEmpty()) {
-                    addSection(rows, "search:group:$name", RowIcon.FOLDER, name, items, collapsed, metaOf, kindOf)
-                }
-            }
-            val rest = matches.filter { !it.pinned && (it.group == null || it.group !in groups) }
-            if (rest.isNotEmpty()) {
-                addSection(rows, "search:other", RowIcon.CLOCK, labels.history, rest, collapsed, metaOf, kindOf)
-            }
+            val rest = matches.filter { !it.pinned }
+            if (rest.isNotEmpty()) addSection(rows, "search:other", RowIcon.CLOCK, labels.history, rest, collapsed, metaOf, kindOf)
             return rows
         }
 
@@ -148,33 +140,6 @@ internal object ClipboardRowModel {
             rows, "pinned", RowIcon.PIN, labels.pinned,
             entries.filter { it.pinned }, collapsed, metaOf, kindOf
         )
-        groups.forEach { name ->
-            val items = entries.filter { !it.pinned && it.group == name }
-            val key = "group:$name"
-            val isCollapsed = key in collapsed
-            // User groups stay visible even when empty so they can be managed.
-            rows += DisplayRow.Header(
-                key = key,
-                title = name,
-                count = items.size,
-                group = name,
-                collapsed = isCollapsed,
-                icon = RowIcon.FOLDER
-            )
-            if (isCollapsed) return@forEach
-            if (items.isEmpty()) {
-                rows += DisplayRow.Message(labels.groupEmpty, null, RowIcon.NONE)
-            } else {
-                items.forEach { entry ->
-                    rows += DisplayRow.Clip(
-                        entry = entry,
-                        kind = kindOf(entry),
-                        meta = metaOf(entry)
-                    )
-                }
-            }
-        }
-
         val rest = entries.filter { !it.pinned && (it.group == null || it.group !in groups) }
         val today = ArrayList<ClipEntry>()
         val yesterday = ArrayList<ClipEntry>()
@@ -193,6 +158,19 @@ internal object ClipboardRowModel {
             rows += DisplayRow.Message(labels.historyEmpty, labels.emptyHint, RowIcon.NONE)
         }
         return rows
+    }
+
+    /** Rows for a selected group tray. Empty groups retain an explicit empty state. */
+    fun buildGroup(
+        entries: List<ClipEntry>,
+        group: String,
+        emptyMessage: String,
+        metaOf: (ClipEntry) -> String,
+        kindOf: (ClipEntry) -> ClipboardUiKit.ClipKind
+    ): List<DisplayRow> {
+        val items = entries.filter { !it.pinned && it.group == group }
+        if (items.isEmpty()) return listOf(DisplayRow.Message(emptyMessage, null, RowIcon.NONE))
+        return items.map { DisplayRow.Clip(it, kindOf(it), metaOf(it)) }
     }
 
     private fun addSection(
