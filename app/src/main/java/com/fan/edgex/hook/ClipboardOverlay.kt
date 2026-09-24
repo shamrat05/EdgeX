@@ -2706,10 +2706,15 @@ object ClipboardOverlay {
     }
 
     private fun notifyClipRowChanged(id: String) {
-        val position = adapter?.currentList?.indexOfFirst {
-            it is DisplayRow.Clip && it.entry.id == id
-        } ?: -1
-        if (position >= 0) adapter?.notifyItemChanged(position)
+        fun notifyIfPresent(target: ClipAdapter?) {
+            val position = target?.currentList?.indexOfFirst {
+                it is DisplayRow.Clip && it.entry.id == id
+            } ?: -1
+            if (position >= 0) target?.notifyItemChanged(position)
+        }
+
+        notifyIfPresent(adapter)
+        notifyIfPresent(ui?.groupRecycler?.adapter as? ClipAdapter)
     }
 
     private fun updateSelectionUi(current: OverlayUi) {
