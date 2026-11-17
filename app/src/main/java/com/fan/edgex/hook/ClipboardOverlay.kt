@@ -2659,7 +2659,10 @@ object ClipboardOverlay {
                 current.countView.text = getString(R.string.clipboard_count, entries.size)
                 current.clearAll.isEnabled = hasClearableHistory
                 current.clearAll.alpha = if (hasClearableHistory) 1f else 0.4f
-                if (!preserveScroll) current.recycler.scrollToPosition(0)
+                if (!preserveScroll) {
+                    current.recycler.scrollToPosition(0)
+                    current.pinnedRecycler?.scrollToPosition(0)
+                }
                 if (animateTop) fadeFirstRow(current)
             }
         }
