@@ -47,6 +47,7 @@ class MainHook : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 PremiumPluginLoader.tryLoad()
                 hookInputManager(lpparam)
             }
+            "com.android.systemui" -> SystemClipboardShareHook.install(lpparam.classLoader)
             else -> ClipboardInputMethodHook.handleLoadPackage(lpparam)
         }
     }

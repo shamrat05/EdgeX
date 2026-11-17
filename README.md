@@ -85,6 +85,7 @@ Need edge gestures without Root or LSPosed? Try EdgeY, the non-root version of t
 - If gestures do not trigger, check the LSPosed scopes, module enablement, and whether the device was rebooted after enabling the module.
 - If freezer or shortcut fallback actions fail, check `su` authorization and your root manager logs.
 - Use the in-app SystemUI restart entry if system-side overlays or actions need a quick refresh.
+- To open the standard Android share sheet from **Send to device** in the copy popup, add **System UI** to EdgeX’s LSPosed scope and restart System UI.
 
 ## Tested Environment
 
