@@ -396,13 +396,13 @@ object ClipboardOverlay {
                 setPaddingRelative(dp(8), 0, dp(4), 0)
                 isClickable = true
                 layoutParams = RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(42)
-                ).apply { topMargin = dp(4) }
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(30)
+                ).apply { topMargin = dp(2) }
             }
             val icon = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_INSIDE }
-            root.addView(icon, LinearLayout.LayoutParams(dp(17), dp(17)))
+            root.addView(icon, LinearLayout.LayoutParams(dp(13), dp(13)))
             val title = TextView(context).apply {
-                textSize = 13.5f
+                textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
@@ -410,10 +410,10 @@ object ClipboardOverlay {
             root.addView(
                 title,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    .apply { marginStart = dp(8) }
+                    .apply { marginStart = dp(5) }
             )
             val badge = TextView(context).apply {
-                textSize = 11f
+                textSize = 10f
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
             }
@@ -421,7 +421,7 @@ object ClipboardOverlay {
                 badge,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { marginStart = dp(8) }
+                ).apply { marginStart = dp(5) }
             )
             val more = ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
@@ -430,10 +430,10 @@ object ClipboardOverlay {
             }
             root.addView(
                 more,
-                LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginStart = dp(4) }
+                LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginStart = dp(4) }
             )
             val chevron = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_INSIDE }
-            root.addView(chevron, LinearLayout.LayoutParams(dp(20), dp(20)))
+            root.addView(chevron, LinearLayout.LayoutParams(dp(16), dp(16)))
 
             val holder = HeaderHolder(root, icon, title, badge, more, chevron)
             if (palette != null) {
@@ -443,7 +443,7 @@ object ClipboardOverlay {
                 badge.background = ClipboardUiKit.rounded(
                     palette.accentAlpha(0.16f), dp(9).toFloat()
                 )
-                badge.setPaddingRelative(dp(7), dp(1), dp(7), dp(1))
+                badge.setPaddingRelative(dp(5), dp(1), dp(5), dp(1))
                 more.background = ClipboardUiKit.ripple(rippleColor(palette))
                 more.contentDescription = getString(R.string.clipboard_group_actions)
                 more.setImageDrawable(ClipboardUiKit.icon(context, R.drawable.ic_more_vert, palette.iconMuted))
@@ -1969,92 +1969,76 @@ object ClipboardOverlay {
         }
         handleWrap.addView(
             handle,
-            FrameLayout.LayoutParams(dp(36), dp(4)).apply { gravity = Gravity.CENTER }
+            FrameLayout.LayoutParams(dp(28), dp(3)).apply { gravity = Gravity.CENTER }
         )
         sheet.addView(
             handleWrap,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(26)
-            ).apply { topMargin = dp(6) }
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(19)
+            ).apply { topMargin = dp(1) }
         )
 
         // ── Title header (collapses when the list scrolls) ─────────────────────
         val titleHeader = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPaddingRelative(dp(18), dp(2), dp(10), dp(10))
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPaddingRelative(dp(12), 0, dp(7), dp(2))
         }
-        val titleRow = LinearLayout(context).apply {
+        val titleGroup = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val iconTile = FrameLayout(context).apply {
-            background = ClipboardUiKit.rounded(palette.raised, dp(14).toFloat())
-        }
-        val clipboardIcon = ImageView(context).apply {
-            setImageDrawable(ModuleRes.getDrawable(R.drawable.ic_clipboard, palette.accent))
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-        }
-        iconTile.addView(
-            clipboardIcon,
-            FrameLayout.LayoutParams(dp(24), dp(24)).apply { gravity = Gravity.CENTER }
-        )
-        titleRow.addView(iconTile, LinearLayout.LayoutParams(dp(46), dp(46)))
-
-        val titleColumn = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         val titleView = TextView(context).apply {
             text = getString(R.string.clipboard_overlay_title)
-            textSize = 26f
+            textSize = 16f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(palette.textPrimary)
-            letterSpacing = -0.02f
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         }
+        titleGroup.addView(titleView)
         val countView = TextView(context).apply {
-            textSize = 14f
+            textSize = 11f
             setTextColor(palette.textSecondary)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         }
-        titleColumn.addView(titleView)
-        titleColumn.addView(
+        titleGroup.addView(
             countView,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(1) }
+            ).apply { marginStart = dp(8) }
         )
-        titleRow.addView(
-            titleColumn,
+        titleHeader.addView(
+            titleGroup,
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                .apply { marginStart = dp(12) }
         )
 
         val clearAll = TextView(context).apply {
             text = getString(R.string.clipboard_clear_all)
-            textSize = 14f
+            textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(palette.accent)
             gravity = Gravity.CENTER
-            setPaddingRelative(dp(12), 0, dp(12), 0)
+            minHeight = dp(36)
+            setPaddingRelative(dp(8), 0, dp(8), 0)
             background = ClipboardUiKit.ripple(rippleColor(palette))
             setOnClickListener { onClearAllClicked() }
         }
-        titleRow.addView(
+        titleHeader.addView(
             clearAll,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(46))
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         )
 
         val overflow = actionIcon(
-            context, R.drawable.ic_more_vert, palette, palette.iconMuted, dp(44), dp(44),
+            context, R.drawable.ic_more_vert, palette, palette.iconMuted, dp(36), dp(36),
             getString(R.string.clipboard_more_actions)
         ) { }
         overflow.setOnClickListener { currentUi()?.let { showHeaderMenu(it, overflow) } }
-        titleRow.addView(overflow)
+        titleHeader.addView(overflow)
 
-        titleHeader.addView(
-            titleRow,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
         sheet.addView(
             titleHeader,
             LinearLayout.LayoutParams(
@@ -2065,23 +2049,23 @@ object ClipboardOverlay {
         // ── Search (sticky, outside the list) ──────────────────────────────────
         val searchWrap = FrameLayout(context).apply {
             background = ClipboardUiKit.rounded(
-                palette.card, dp(16).toFloat(), dp(1), palette.border
+                palette.card, dp(12).toFloat(), dp(1), palette.border
             )
         }
         val search = EditText(context).apply {
             hint = getString(R.string.clipboard_search_hint)
             setHintTextColor(palette.textSecondary)
             setTextColor(palette.textPrimary)
-            textSize = 15f
+            textSize = 13f
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT
             imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_FULLSCREEN
             background = null
-            setPaddingRelative(dp(14), 0, dp(40), 0)
+            setPaddingRelative(dp(10), 0, dp(38), 0)
             val searchIcon = ModuleRes.getDrawable(R.drawable.ic_search, palette.iconMuted)
-            searchIcon?.setBounds(0, 0, dp(18), dp(18))
+            searchIcon?.setBounds(0, 0, dp(14), dp(14))
             setCompoundDrawablesRelative(searchIcon, null, null, null)
-            compoundDrawablePadding = dp(10)
+            compoundDrawablePadding = dp(7)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                 textCursorDrawable = ClipboardUiKit.rounded(palette.accent, dp(1).toFloat())
             }
@@ -2101,24 +2085,24 @@ object ClipboardOverlay {
         searchClear.visibility = View.GONE
         searchWrap.addView(
             search,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(46))
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(36))
         )
         searchWrap.addView(
             searchClear,
             FrameLayout.LayoutParams(dp(32), dp(32)).apply {
                 gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                marginEnd = dp(8)
+                marginEnd = dp(3)
             }
         )
         sheet.addView(
             searchWrap,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)
             ).apply {
-                marginStart = dp(18)
-                marginEnd = dp(18)
+                marginStart = dp(12)
+                marginEnd = dp(12)
                 topMargin = dp(2)
-                bottomMargin = dp(10)
+                bottomMargin = dp(5)
             }
         )
 
