@@ -285,9 +285,39 @@ object ClipboardOverlay {
 
     private class PinnedRecyclerView(context: Context) : RecyclerView(context) {
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+        private val scrollThumb = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val density = context.resources.displayMetrics.density
         private var startX = 0f
         private var startY = 0f
         private var awaitingDirection = false
+
+        fun setScrollThumbColor(color: Int) {
+            scrollThumb.color = color
+        }
+
+        override fun onDrawForeground(canvas: Canvas) {
+            super.onDrawForeground(canvas)
+            val range = computeVerticalScrollRange()
+            val extent = computeVerticalScrollExtent()
+            val trackHeight = (height - paddingTop - paddingBottom).toFloat()
+            if (range <= extent || extent <= 0 || trackHeight <= 0f) return
+
+            val thumbHeight = (trackHeight * extent / range)
+                .coerceIn(minOf(12f * density, trackHeight), trackHeight)
+            val progress = (computeVerticalScrollOffset().toFloat() / (range - extent))
+                .coerceIn(0f, 1f)
+            val top = paddingTop + (trackHeight - thumbHeight) * progress
+            val thumbWidth = 2f * density
+            val left = if (layoutDirection == View.LAYOUT_DIRECTION_RTL) {
+                thumbWidth
+            } else {
+                width - 2f * thumbWidth
+            }
+            canvas.drawRoundRect(
+                left, top, left + thumbWidth, top + thumbHeight,
+                thumbWidth / 2f, thumbWidth / 2f, scrollThumb
+            )
+        }
 
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
@@ -538,13 +568,14 @@ object ClipboardOverlay {
                 itemAnimator = null
                 overScrollMode = View.OVER_SCROLL_NEVER
                 isNestedScrollingEnabled = false
-                isScrollbarFadingEnabled = false
+                isVerticalScrollBarEnabled = false
                 setPaddingRelative(dp(4), dp(4), dp(7), dp(4))
                 current?.palette?.let { palette ->
                     background = ClipboardUiKit.rounded(
                         palette.raised, dp(12).toFloat(), dp(1), palette.border
                     )
                     clipToOutline = true
+                    setScrollThumbColor(palette.accent)
                 }
             }
             ItemTouchHelper(buildSwipeCallback()).attachToRecyclerView(list)
@@ -558,7 +589,6 @@ object ClipboardOverlay {
             if (list.layoutParams.height != targetHeight) {
                 list.layoutParams = list.layoutParams.apply { height = targetHeight }
             }
-            list.isVerticalScrollBarEnabled = row.clips.size > row.visibleRows
             val sectionChanged = holder.sectionKey != row.sectionKey
             holder.sectionKey = row.sectionKey
             holder.clips.submitList(row.clips) { if (sectionChanged) list.scrollToPosition(0) }
