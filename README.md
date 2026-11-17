@@ -50,7 +50,7 @@ Need edge gestures without Root or LSPosed? Try EdgeY, the non-root version of t
 - **Action workflows**: save multiple-action combinations and run conditional actions for more flexible automation.
 - **App switching**: switch directly to the previous or next recent app.
 - **Freezer drawer**: manage frozen apps from a side drawer, unfreeze and launch apps, then refreeze them.
-- **Clipboard history**: show the last 50 clipboard entries in a bottom-sheet overlay; tap any entry to inject it into the focused field, or delete individual entries.
+- **Clipboard history**: keep ordinary clips for 30 days. Pinned and grouped clips stay until removed. Tap a clip in the bottom sheet to paste it into the focused field.
 - **Universal copy**: collect accessible text from the current screen and copy selected text blocks from an overlay.
 - **Shell commands**: bind custom commands to gestures or keys, with optional `su` execution.
 - **Media controls**: play/pause, stop, previous track, and next track.

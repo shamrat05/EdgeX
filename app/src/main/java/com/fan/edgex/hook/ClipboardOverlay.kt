@@ -58,6 +58,7 @@ import com.fan.edgex.R
 import com.fan.edgex.config.ClipEntry
 import com.fan.edgex.config.ClipType
 import com.fan.edgex.config.ClipboardHistoryMerge
+import com.fan.edgex.config.ClipboardHistoryRetention
 import com.fan.edgex.config.ClipboardHistorySnapshot
 import com.fan.edgex.config.ScreenshotMediaFilter
 import com.fan.edgex.config.ClipboardImageStore
@@ -114,8 +115,6 @@ object ClipboardOverlay {
     private const val UNDO_MS = 4_000L
     private const val PASTE_DELAY_MS = 250L
     private const val IMAGE_BRIDGE_TIMEOUT_MS = 5_000L
-    private const val MAX_HISTORY = 50
-    private const val MAX_PINNED = 50
     private const val MAX_CLIP_PREVIEW_CHARS = 512
     private const val CLIP_ICON_DP = 14
     private const val CLIP_ICON_COLUMN_DP = 16
@@ -975,7 +974,6 @@ object ClipboardOverlay {
         } else {
             history.add(0, ClipEntry(text = text, timestamp = timestamp, sourceUid = sourceUid))
         }
-        trimLocked()
         persistLocked()
         handler.post { refreshIfShowing() }
     }
@@ -983,6 +981,9 @@ object ClipboardOverlay {
     @Synchronized
     private fun historySnapshot(): List<ClipEntry> {
         ensureHistoryLoadedLocked()
+        if (System.currentTimeMillis() >= nextHistoryExpiry &&
+            applyHistoryRetentionLocked()
+        ) enqueueHistorySnapshotLocked()
         return ArrayList(history)
     }
 
@@ -1222,7 +1223,6 @@ object ClipboardOverlay {
                 )
             )
         }
-        trimLocked()
         persistLocked()
     }
 
@@ -1247,13 +1247,14 @@ object ClipboardOverlay {
 
     private fun ensureHistoryLoadedLocked() {
         if (historyLoaded) return
-        val snapshot = HookClipboardHistoryStore.readForHook(MAX_HISTORY)
+        val snapshot = HookClipboardHistoryStore.readForHook()
         history.clear()
         history.addAll(snapshot.entries)
         groups.clear()
         groups.addAll(snapshot.groups)
         hintDismissed = snapshot.hintDismissed
         historyLoaded = true
+        if (applyHistoryRetentionLocked()) enqueueHistorySnapshotLocked()
     }
     // ── Coalesced background persistence ───────────────────────────────────────
 
@@ -1272,6 +1273,11 @@ object ClipboardOverlay {
      * guarantees writes can never reorder.
      */
     private fun persistLocked() {
+        applyHistoryRetentionLocked()
+        enqueueHistorySnapshotLocked()
+    }
+
+    private fun enqueueHistorySnapshotLocked() {
         pendingSnapshot.set(
             ClipboardHistorySnapshot(
                 entries = history.toList(),
@@ -1305,26 +1311,50 @@ object ClipboardOverlay {
         synchronized(this) { ensureHistoryLoadedLocked() }
     }
 
-    /** Keeps pinned entries protected while the ordinary limit trims unpinned ones. */
-    private fun trimLocked() {
-        var unpinned = history.count { !it.pinned }
-        var index = history.lastIndex
-        while (unpinned > MAX_HISTORY && index >= 0) {
-            if (!history[index].pinned) {
-                history.removeAt(index)
-                unpinned--
-            }
-            index--
+    private var nextHistoryExpiry = Long.MAX_VALUE
+    private val historyExpiry = Runnable {
+        val changed = synchronized(this) {
+            val expired = applyHistoryRetentionLocked()
+            if (expired) enqueueHistorySnapshotLocked()
+            expired
         }
-        var pinned = history.count { it.pinned }
-        index = history.lastIndex
-        while (pinned > MAX_PINNED && index >= 0) {
-            if (history[index].pinned) {
-                history.removeAt(index)
-                pinned--
+        if (changed) refreshIfShowing()
+    }
+
+    private fun applyHistoryRetentionLocked(): Boolean {
+        val now = System.currentTimeMillis()
+        var changed = false
+        // Legacy ordinary clips have no copy date. Give them a full retention
+        // period starting when they enter the dated history.
+        history.forEachIndexed { index, entry ->
+            if (entry.timestamp <= 0L && !entry.pinned && entry.group == null) {
+                history[index] = entry.copy(timestamp = now)
+                invalidateClipUi(entry.id)
+                changed = true
             }
-            index--
         }
+
+        nextHistoryExpiry = Long.MAX_VALUE
+        history.removeAll { entry ->
+            val expiry = ClipboardHistoryRetention.expiresAt(entry) ?: return@removeAll false
+            if (expiry <= now) {
+                scheduleImageCleanup(entry)
+                invalidateClipUi(entry.id)
+                changed = true
+                true
+            } else {
+                nextHistoryExpiry = minOf(nextHistoryExpiry, expiry)
+                false
+            }
+        }
+        handler.removeCallbacks(historyExpiry)
+        if (nextHistoryExpiry != Long.MAX_VALUE) {
+            handler.postDelayed(
+                historyExpiry,
+                minOf(nextHistoryExpiry - now, ClipboardHistoryRetention.DURATION_MILLIS)
+            )
+        }
+        return changed
     }
 
     @Synchronized
@@ -1352,7 +1382,6 @@ object ClipboardOverlay {
         ensureHistoryLoadedLocked()
         if (history.any { it.id == entry.id }) return
         history.add(index.coerceIn(0, history.size), entry)
-        trimLocked()
         persistLocked()
     }
 
@@ -1477,9 +1506,10 @@ object ClipboardOverlay {
 
     fun isShowing(): Boolean = ui != null
 
-    /** Keeps clipboard capture available before the user first opens the sheet. */
+    /** Starts clipboard history when the system clipboard service is ready. */
     fun setSystemContext(context: Context) {
         lastContext = context
+        ioExecutor.execute { loadHistoryBlocking() }
     }
 
     fun show(context: Context) {
@@ -2489,8 +2519,7 @@ object ClipboardOverlay {
         requestId: Long = rowBuildGeneration.incrementAndGet()
     ) {
         val (entries, groupNames) = synchronized(this) {
-            ensureHistoryLoadedLocked()
-            history.toList() to groups.toList()
+            historySnapshot() to groups.toList()
         }
         val query = current.search.text?.toString().orEmpty()
         val expandedGroup = current.expandedGroup
@@ -3746,7 +3775,6 @@ object ClipboardOverlay {
                     groups.clear()
                     groups.addAll(result.snapshot.groups)
                     hintDismissed = result.snapshot.hintDismissed
-                    trimLocked()
                     persistLocked()
                     clipUiCache.clear()
                     result
@@ -3967,8 +3995,8 @@ object ClipboardOverlay {
 
     /**
      * Parses and validates a backup before it is allowed to replace anything.
-     * Rejects unsupported versions, truncates oversized payloads, caps total
-     * entries and deduplicates by text. Video-length clip text is deliberately
+     * Rejects unsupported versions, truncates oversized payloads and
+     * deduplicates by text. Video-length clip text is deliberately
      * rejected so a corrupt or hostile file cannot freeze system_server.
      */
     private fun jsonToSnapshot(json: String): ClipboardHistorySnapshot? = runCatching {
@@ -3980,8 +4008,8 @@ object ClipboardOverlay {
         val entries = ArrayList<ClipEntry>()
         val seen = HashSet<String>()
         val array = root.optJSONArray("entries") ?: JSONArray()
+        val now = System.currentTimeMillis()
         for (index in 0 until array.length()) {
-            if (entries.size >= MAX_PINNED + MAX_HISTORY) break
             val item = array.optJSONObject(index) ?: continue
             val isImage = item.optString("type", "text") == "image"
             val entry: ClipEntry? = if (isImage) {
@@ -4007,15 +4035,17 @@ object ClipboardOverlay {
                 ClipEntry(text = text)
             }
             if (entry == null) continue
-            val identity = if (isImage) "i:${item.optString("imageFile")}" else "t:${entry.text}"
-            if (!seen.add(identity)) continue
-            entries += entry.copy(
+            val restored = entry.copy(
                 timestamp = item.optLong("timestamp", 0L),
                 pinned = item.optBoolean("pinned", false),
                 group = item.optString("group", "").take(MAX_GROUP_NAME_CHARS)
                     .takeIf { it.isNotEmpty() },
                 sourceUid = item.optInt("sourceUid", -1)
             )
+            val expiry = ClipboardHistoryRetention.expiresAt(restored)
+            if (expiry != null && expiry <= now) continue
+            val identity = if (isImage) "i:${item.optString("imageFile")}" else "t:${restored.text}"
+            if (seen.add(identity)) entries += restored
         }
         val knownGroups = entries.mapNotNull { it.group }.toHashSet()
         val groups = ArrayList<String>()

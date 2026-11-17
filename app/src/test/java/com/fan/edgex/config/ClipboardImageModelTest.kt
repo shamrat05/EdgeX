@@ -115,7 +115,7 @@ class ClipboardImageModelTest {
         )
 
         val decoded = ClipboardHistoryCodec.decode(
-            ClipboardHistoryCodec.encode(snapshot), maxItems = 50, imageExists = { true }
+            ClipboardHistoryCodec.encode(snapshot), imageExists = { true }
         )
 
         assertEquals(2, decoded.entries.size)
@@ -146,11 +146,11 @@ class ClipboardImageModelTest {
             )
         )
         val encoded = ClipboardHistoryCodec.encode(marked)
-        assertTrue(ClipboardHistoryCodec.decode(encoded, 10).entries.single().isScreenshot)
+        assertTrue(ClipboardHistoryCodec.decode(encoded).entries.single().isScreenshot)
 
         val legacy = encoded.toMutableMap().apply { remove("entry.0.screenshot") }
         assertTrue(
-            ClipboardHistoryCodec.decode(legacy, 10).entries.single().isScreenshot
+            ClipboardHistoryCodec.decode(legacy).entries.single().isScreenshot
         )
     }
 
@@ -173,13 +173,13 @@ class ClipboardImageModelTest {
         )
         assertEquals(
             screenshotPath,
-            ClipboardHistoryCodec.decode(safe, 10).entries.single().sourcePath
+            ClipboardHistoryCodec.decode(safe).entries.single().sourcePath
         )
 
         val unsafe = safe.toMutableMap().apply {
             this["entry.0.source_path"] = "/data/system/private.jpg"
         }
-        assertNull(ClipboardHistoryCodec.decode(unsafe, 10).entries.single().sourcePath)
+        assertNull(ClipboardHistoryCodec.decode(unsafe).entries.single().sourcePath)
     }
 
     @Test
@@ -193,7 +193,7 @@ class ClipboardImageModelTest {
             )
         )
 
-        val decoded = ClipboardHistoryCodec.decode(encoded, maxItems = 50, imageExists = { false })
+        val decoded = ClipboardHistoryCodec.decode(encoded, imageExists = { false })
 
         assertEquals(listOf("keep"), decoded.entries.map { it.text })
         assertTrue(decoded.entries.none { it.type == ClipType.IMAGE })
@@ -206,7 +206,7 @@ class ClipboardImageModelTest {
             "count" to "1",
             "entry.0" to "old clip"
         )
-        val decoded = ClipboardHistoryCodec.decode(legacy, maxItems = 50)
+        val decoded = ClipboardHistoryCodec.decode(legacy)
         assertEquals(ClipType.TEXT, decoded.entries.single().type)
         assertEquals("old clip", decoded.entries.single().text)
     }

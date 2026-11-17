@@ -15,8 +15,8 @@ object HookClipboardHistoryStore {
     private const val HISTORY_FILE = "clipboard_history.properties"
     private const val TEMP_FILE = "$HISTORY_FILE.tmp"
 
-    fun readForHook(maxItems: Int): ClipboardHistorySnapshot =
-        read(historyFileForHook(), maxItems)
+    fun readForHook(): ClipboardHistorySnapshot =
+        read(historyFileForHook())
 
     fun writeForHook(snapshot: ClipboardHistorySnapshot): Boolean =
         write(systemHistoryFile(), snapshot)
@@ -28,14 +28,14 @@ object HookClipboardHistoryStore {
         systemHistoryFile().takeIf { it.isFile && it.canRead() }
             ?: File("/data/user_de/0/${BuildConfig.APPLICATION_ID}/files/$HISTORY_FILE")
 
-    private fun read(file: File, maxItems: Int): ClipboardHistorySnapshot {
+    private fun read(file: File): ClipboardHistorySnapshot {
         if (!file.isFile || !file.canRead()) return ClipboardHistorySnapshot()
         return runCatching {
             val properties = Properties()
             FileInputStream(file).use(properties::load)
             val values = properties.stringPropertyNames()
                 .associateWith { properties.getProperty(it, "") }
-            ClipboardHistoryCodec.decode(values, maxItems, existsChecker())
+            ClipboardHistoryCodec.decode(values, existsChecker())
         }.getOrDefault(ClipboardHistorySnapshot())
     }
 

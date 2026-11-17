@@ -62,6 +62,15 @@ data class ClipEntry(
         }
 }
 
+internal object ClipboardHistoryRetention {
+    const val DURATION_MILLIS = 30L * 24 * 60 * 60 * 1_000
+
+    fun expiresAt(entry: ClipEntry): Long? {
+        if (entry.pinned || entry.group != null || entry.timestamp <= 0L) return null
+        return entry.timestamp.coerceAtMost(Long.MAX_VALUE - DURATION_MILLIS) + DURATION_MILLIS
+    }
+}
+
 /** Full persisted clipboard state: entries, user groups and small UI flags. */
 data class ClipboardHistorySnapshot(
     val entries: List<ClipEntry> = emptyList(),
@@ -207,19 +216,16 @@ object ClipboardHistoryCodec {
     }
 
     /**
-     * Decodes a properties map. Pinned entries are always kept; ordinary
-     * entries are capped at [maxItems]. Version-1 entries (bare `entry.N` keys)
+     * Decodes a properties map. Version-1 entries (bare `entry.N` keys)
      * are accepted as text-only legacy records, and image entries without a
      * readable owned file are dropped rather than shown as broken rows.
      */
     fun decode(
         values: Map<String, String>,
-        maxItems: Int,
         imageExists: (String) -> Boolean = { true }
     ): ClipboardHistorySnapshot {
-        val count = values[KEY_COUNT]?.toIntOrNull() ?: 0
-        val entries = ArrayList<ClipEntry>(minOf(count, maxItems))
-        var unpinned = 0
+        val count = (values[KEY_COUNT]?.toIntOrNull() ?: 0).coerceIn(0, values.size)
+        val entries = ArrayList<ClipEntry>(count)
         for (index in 0 until count) {
             val prefix = "$ENTRY_PREFIX$index"
             val isImage = values["$prefix.type"] == "image"
@@ -262,19 +268,14 @@ object ClipboardHistoryCodec {
             }
             if (entry == null) continue
 
-            val pinned = values["$prefix.pinned"] == "1"
-            if (!pinned) {
-                if (unpinned >= maxItems) continue
-                unpinned++
-            }
             entries += entry.copy(
                 timestamp = values["$prefix.time"]?.toLongOrNull() ?: 0L,
-                pinned = pinned,
+                pinned = values["$prefix.pinned"] == "1",
                 group = values["$prefix.group"]?.takeIf { it.isNotEmpty() },
                 sourceUid = values["$prefix.uid"]?.toIntOrNull() ?: -1
             )
         }
-        val groupCount = values[KEY_GROUPS_COUNT]?.toIntOrNull() ?: 0
+        val groupCount = (values[KEY_GROUPS_COUNT]?.toIntOrNull() ?: 0).coerceIn(0, values.size)
         val groups = (0 until groupCount).mapNotNull { index ->
             values["$GROUP_PREFIX$index"]?.takeIf { it.isNotEmpty() }
         }

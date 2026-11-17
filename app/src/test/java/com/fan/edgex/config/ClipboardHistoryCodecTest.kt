@@ -21,7 +21,7 @@ class ClipboardHistoryCodecTest {
         )
 
         val decoded = ClipboardHistoryCodec.decode(
-            ClipboardHistoryCodec.encode(snapshot), maxItems = 50
+            ClipboardHistoryCodec.encode(snapshot)
         )
 
         assertEquals(snapshot.entries, decoded.entries)
@@ -38,7 +38,7 @@ class ClipboardHistoryCodecTest {
             "entry.1" to "second"
         )
 
-        val decoded = ClipboardHistoryCodec.decode(legacy, maxItems = 50)
+        val decoded = ClipboardHistoryCodec.decode(legacy)
 
         assertEquals(2, decoded.entries.size)
         assertEquals("first", decoded.entries[0].text)
@@ -51,21 +51,30 @@ class ClipboardHistoryCodecTest {
     }
 
     @Test
-    fun `pinned entries survive the ordinary limit`() {
-        val values = mapOf(
-            "count" to "4",
-            "entry.0.text" to "a",
-            "entry.1.text" to "b",
-            "entry.2.text" to "keep-me",
-            "entry.2.pinned" to "1",
-            "entry.3.text" to "c"
+    fun `history round trips more than fifty ordinary and protected clips`() {
+        val entries = List(65) { ClipEntry(text = "clip-$it", timestamp = 100L + it) } +
+            List(55) { ClipEntry(text = "pinned-$it", pinned = true) } +
+            List(55) { ClipEntry(text = "grouped-$it", group = "Work") }
+
+        val decoded = ClipboardHistoryCodec.decode(
+            ClipboardHistoryCodec.encode(ClipboardHistorySnapshot(entries = entries))
         )
 
-        val decoded = ClipboardHistoryCodec.decode(values, maxItems = 2)
+        assertEquals(entries, decoded.entries)
+    }
 
-        // Two newest unpinned entries plus the pinned one.
-        assertEquals(listOf("a", "b", "keep-me"), decoded.entries.map { it.text })
-        assertTrue(decoded.entries.last().pinned)
+    @Test
+    fun `ordinary clips expire 30 days after capture`() {
+        val capturedAt = 1_700_000_000_000L
+        val text = ClipEntry(text = "ordinary", timestamp = capturedAt)
+        val image = ClipEntry(type = ClipType.IMAGE, timestamp = capturedAt)
+        val expected = capturedAt + 2_592_000_000L
+
+        assertEquals(expected, ClipboardHistoryRetention.expiresAt(text))
+        assertEquals(expected, ClipboardHistoryRetention.expiresAt(image))
+        assertNull(ClipboardHistoryRetention.expiresAt(text.copy(pinned = true)))
+        assertNull(ClipboardHistoryRetention.expiresAt(image.copy(group = "Work")))
+        assertNull(ClipboardHistoryRetention.expiresAt(text.copy(timestamp = 0)))
     }
 
     @Test
@@ -76,7 +85,7 @@ class ClipboardHistoryCodecTest {
             "entry.0.group" to ""
         )
 
-        val decoded = ClipboardHistoryCodec.decode(values, maxItems = 50)
+        val decoded = ClipboardHistoryCodec.decode(values)
 
         assertNull(decoded.entries[0].group)
     }
