@@ -3409,25 +3409,19 @@ object ClipboardOverlay {
                 recyclerView: RecyclerView,
                 viewHolder: RecyclerView.ViewHolder
             ): Int {
-                val rows = (viewHolder.bindingAdapter as? ClipAdapter)?.currentList ?: return 0
-                val position = viewHolder.bindingAdapterPosition
-                if (position !in rows.indices) return 0
-                return if (rows[position] is DisplayRow.Clip) {
-                    makeMovementFlags(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT)
-                } else {
-                    0
-                }
+                val clip = viewHolder as? ClipHolder ?: return 0
+                if (clip.adapterPosition == RecyclerView.NO_POSITION || clip.bound == null) return 0
+                return makeMovementFlags(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT)
             }
 
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 val current = currentUi() ?: return
-                val rows = (viewHolder.bindingAdapter as? ClipAdapter)?.currentList ?: return
-                val position = viewHolder.bindingAdapterPosition
-                if (position !in rows.indices) return
-                val row = rows[position] as? DisplayRow.Clip ?: return
+                val holder = viewHolder as? ClipHolder ?: return
+                if (holder.adapterPosition == RecyclerView.NO_POSITION) return
+                val entry = holder.bound?.entry ?: return
                 when (direction) {
-                    ItemTouchHelper.RIGHT -> deleteEntry(current, row.entry)
-                    ItemTouchHelper.LEFT -> togglePinAndRefresh(current, row.entry)
+                    ItemTouchHelper.RIGHT -> deleteEntry(current, entry)
+                    ItemTouchHelper.LEFT -> togglePinAndRefresh(current, entry)
                 }
             }
 
