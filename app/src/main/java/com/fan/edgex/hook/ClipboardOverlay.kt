@@ -1,8 +1,5 @@
 package com.fan.edgex.hook
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.ValueAnimator
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
@@ -209,7 +206,6 @@ object ClipboardOverlay {
         val bottomSpacer: View,
         val bottomSafeArea: Int,
         val transientLayer: FrameLayout,
-        val titleHeader: View,
         val search: EditText,
         val searchClear: View,
         val recycler: RecyclerView,
@@ -220,7 +216,6 @@ object ClipboardOverlay {
         val groupHeaderChevron: ImageView,
         val groupRecycler: RecyclerView,
         val groupDock: RecyclerView,
-        val countView: TextView,
         val clearAll: TextView,
         val selectionBar: LinearLayout,
         val selectionCount: TextView,
@@ -230,9 +225,7 @@ object ClipboardOverlay {
     ) {
         val density: Float = context.resources.displayMetrics.density
         var sheetTop = 0
-        var titleCollapsed = false
         var pinnedRecycler: RecyclerView? = null
-        var titleHeaderFullHeight = 0
         var keyboardVisible = false
         var imeInsetsKnown = false
         var rootHeight = 0
@@ -569,7 +562,7 @@ object ClipboardOverlay {
                 overScrollMode = View.OVER_SCROLL_NEVER
                 isNestedScrollingEnabled = false
                 isVerticalScrollBarEnabled = false
-                setPaddingRelative(dp(4), dp(4), dp(7), dp(4))
+                setPaddingRelative(dp(4), dp(4), dp(6), dp(4))
                 current?.palette?.let { palette ->
                     background = ClipboardUiKit.rounded(
                         palette.raised, dp(12).toFloat(), dp(1), palette.border
@@ -603,7 +596,7 @@ object ClipboardOverlay {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPaddingRelative(
-                    dp(6), dp(CLIP_VERTICAL_PADDING_DP), dp(2), dp(CLIP_VERTICAL_PADDING_DP)
+                    dp(6), dp(CLIP_VERTICAL_PADDING_DP), 0, dp(CLIP_VERTICAL_PADDING_DP)
                 )
                 isClickable = true
                 isFocusable = true
@@ -667,19 +660,19 @@ object ClipboardOverlay {
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
                 isClickable = true
                 isFocusable = true
-                setPaddingRelative(dp(8), dp(8), dp(8), dp(8))
+                setPaddingRelative(dp(6), dp(8), dp(6), dp(8))
             }
             val pin = actionView()
-            actions.addView(pin, LinearLayout.LayoutParams(dp(28), dp(32)))
+            actions.addView(pin, LinearLayout.LayoutParams(dp(24), dp(32)))
             val copy = actionView()
             actions.addView(
                 copy,
-                LinearLayout.LayoutParams(dp(28), dp(32))
+                LinearLayout.LayoutParams(dp(24), dp(32))
             )
             val more = actionView()
             actions.addView(
                 more,
-                LinearLayout.LayoutParams(dp(26), dp(32))
+                LinearLayout.LayoutParams(dp(24), dp(32))
             )
             root.addView(actions)
 
@@ -1829,7 +1822,6 @@ object ClipboardOverlay {
                 }
             )
             SheetParts(
-                titleHeader = View(context),
                 search = EditText(context),
                 searchClear = View(context),
                 recycler = RecyclerView(ModuleRes.contextWithModuleResources(context)),
@@ -1840,7 +1832,6 @@ object ClipboardOverlay {
                 groupHeaderChevron = ImageView(context),
                 groupRecycler = RecyclerView(context),
                 groupDock = RecyclerView(context),
-                countView = TextView(context),
                 clearAll = TextView(context),
                 selectionBar = LinearLayout(context),
                 selectionCount = TextView(context),
@@ -1874,7 +1865,6 @@ object ClipboardOverlay {
             bottomSpacer = built.bottomSpacer,
             bottomSafeArea = bottomSafeArea,
             transientLayer = transientLayer,
-            titleHeader = built.titleHeader,
             search = built.search,
             searchClear = built.searchClear,
             recycler = built.recycler,
@@ -1885,7 +1875,6 @@ object ClipboardOverlay {
             groupHeaderChevron = built.groupHeaderChevron,
             groupRecycler = built.groupRecycler,
             groupDock = built.groupDock,
-            countView = built.countView,
             clearAll = built.clearAll,
             selectionBar = built.selectionBar,
             selectionCount = built.selectionCount,
@@ -2028,14 +2017,7 @@ object ClipboardOverlay {
             }
         }
 
-        if (visible != wasVisible) {
-            if (visible) {
-                animateTitleHeader(current, collapse = true)
-            } else if (current.recycler.computeVerticalScrollOffset() <= current.dp(18)) {
-                animateTitleHeader(current, collapse = false)
-            }
-            current.sheet.requestLayout()
-        }
+        if (visible != wasVisible) current.sheet.requestLayout()
     }
 
     private class SheetLayout(
@@ -2060,7 +2042,6 @@ object ClipboardOverlay {
     }
 
     private class SheetParts(
-        val titleHeader: View,
         val search: EditText,
         val searchClear: View,
         val recycler: RecyclerView,
@@ -2071,7 +2052,6 @@ object ClipboardOverlay {
         val groupHeaderChevron: ImageView,
         val groupRecycler: RecyclerView,
         val groupDock: RecyclerView,
-        val countView: TextView,
         val clearAll: TextView,
         val selectionBar: LinearLayout,
         val selectionCount: TextView,
@@ -2110,75 +2090,10 @@ object ClipboardOverlay {
             ).apply { topMargin = dp(1) }
         )
 
-        // ── Title header (collapses when the list scrolls) ─────────────────────
-        val titleHeader = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPaddingRelative(dp(12), 0, dp(7), dp(2))
-        }
-        val titleGroup = LinearLayout(context).apply {
+        val toolbar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val titleView = TextView(context).apply {
-            text = getString(R.string.clipboard_overlay_title)
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(palette.textPrimary)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }
-        titleGroup.addView(titleView)
-        val countView = TextView(context).apply {
-            textSize = 11f
-            setTextColor(palette.textSecondary)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }
-        titleGroup.addView(
-            countView,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dp(8) }
-        )
-        titleHeader.addView(
-            titleGroup,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-
-        val clearAll = TextView(context).apply {
-            text = getString(R.string.clipboard_clear_all)
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(palette.accent)
-            gravity = Gravity.CENTER
-            minHeight = dp(36)
-            setPaddingRelative(dp(8), 0, dp(8), 0)
-            background = ClipboardUiKit.ripple(rippleColor(palette))
-            setOnClickListener { onClearAllClicked() }
-        }
-        titleHeader.addView(
-            clearAll,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-
-        val overflow = actionIcon(
-            context, R.drawable.ic_more_vert, palette, palette.iconMuted, dp(36), dp(36),
-            getString(R.string.clipboard_more_actions)
-        ) { }
-        overflow.setOnClickListener { currentUi()?.let { showHeaderMenu(it, overflow) } }
-        titleHeader.addView(overflow)
-
-        sheet.addView(
-            titleHeader,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        )
-
-        // ── Search (sticky, outside the list) ──────────────────────────────────
         val searchWrap = FrameLayout(context).apply {
             background = ClipboardUiKit.rounded(
                 palette.card, dp(12).toFloat(), dp(1), palette.border
@@ -2226,14 +2141,39 @@ object ClipboardOverlay {
                 marginEnd = dp(3)
             }
         )
-        sheet.addView(
-            searchWrap,
+        toolbar.addView(searchWrap, LinearLayout.LayoutParams(0, dp(36), 1f))
+
+        val clearAll = TextView(context).apply {
+            text = getString(R.string.clipboard_clear_all)
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(palette.accent)
+            gravity = Gravity.CENTER
+            minHeight = dp(36)
+            setPaddingRelative(dp(8), 0, dp(8), 0)
+            background = ClipboardUiKit.ripple(rippleColor(palette))
+            setOnClickListener { onClearAllClicked() }
+        }
+        toolbar.addView(
+            clearAll,
             LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(36)
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = dp(2) }
+        )
+        val overflow = actionIcon(
+            context, R.drawable.ic_more_vert, palette, palette.iconMuted, dp(32), dp(36),
+            getString(R.string.clipboard_more_actions)
+        ) { }
+        overflow.setOnClickListener { currentUi()?.let { showHeaderMenu(it, overflow) } }
+        toolbar.addView(overflow)
+
+        sheet.addView(
+            toolbar,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
                 marginStart = dp(12)
-                marginEnd = dp(12)
-                topMargin = dp(2)
+                marginEnd = dp(6)
                 bottomMargin = dp(5)
             }
         )
@@ -2309,17 +2249,8 @@ object ClipboardOverlay {
             setHasFixedSize(false)
             overScrollMode = View.OVER_SCROLL_NEVER
             clipToPadding = false
-            isVerticalScrollBarEnabled = true
-            setPaddingRelative(dp(12), dp(2), dp(12), dp(8))
-            addOnScrollListener(object : RecyclerView.OnScrollListener() {
-                override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                    val current = currentUi() ?: return
-                    val shouldCollapse = rv.computeVerticalScrollOffset() > current.dp(18)
-                    if (shouldCollapse != current.titleCollapsed) {
-                        animateTitleHeader(current, shouldCollapse)
-                    }
-                }
-            })
+            isVerticalScrollBarEnabled = false
+            setPaddingRelative(dp(12), dp(2), dp(6), dp(8))
         }
         sheet.addView(
             recycler,
@@ -2445,7 +2376,6 @@ object ClipboardOverlay {
         })
 
         return SheetParts(
-            titleHeader = titleHeader,
             search = search,
             searchClear = searchClear,
             recycler = recycler,
@@ -2456,7 +2386,6 @@ object ClipboardOverlay {
             groupHeaderChevron = trayChevron,
             groupRecycler = groupRecycler,
             groupDock = groupDock,
-            countView = countView,
             clearAll = clearAll,
             selectionBar = selectionBar,
             selectionCount = selectionCount,
@@ -2502,68 +2431,6 @@ object ClipboardOverlay {
         close.setOnClickListener { onDismiss(bar) }
         bar.addView(close)
         return bar
-    }
-
-    private fun animateTitleHeader(current: OverlayUi, collapse: Boolean) {
-        val header = current.titleHeader
-        if (collapse) {
-            if (current.titleHeaderFullHeight <= 0) {
-                current.titleHeaderFullHeight = header.height
-            }
-            val full = current.titleHeaderFullHeight
-            if (full <= 0) {
-                header.visibility = View.GONE
-                current.titleCollapsed = true
-                return
-            }
-            ValueAnimator.ofInt(full, 0).apply {
-                duration = 180
-                addUpdateListener { animator ->
-                    val height = animator.animatedValue as Int
-                    header.layoutParams = header.layoutParams.apply { this.height = height }
-                    header.alpha = height.toFloat() / full
-                    header.requestLayout()
-                }
-                addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
-                        header.visibility = View.GONE
-                        header.alpha = 1f
-                    }
-                })
-                start()
-            }.also { current.titleCollapsed = true }
-        } else {
-            val full = current.titleHeaderFullHeight
-            header.visibility = View.VISIBLE
-            if (full <= 0) {
-                header.layoutParams = header.layoutParams.apply {
-                    height = ViewGroup.LayoutParams.WRAP_CONTENT
-                }
-                header.alpha = 1f
-                header.requestLayout()
-                current.titleCollapsed = false
-                return
-            }
-            ValueAnimator.ofInt(0, full).apply {
-                duration = 180
-                addUpdateListener { animator ->
-                    val height = animator.animatedValue as Int
-                    header.layoutParams = header.layoutParams.apply { this.height = height }
-                    header.alpha = height.toFloat() / full
-                    header.requestLayout()
-                }
-                addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator) {
-                        header.layoutParams = header.layoutParams.apply {
-                            height = ViewGroup.LayoutParams.WRAP_CONTENT
-                        }
-                        header.alpha = 1f
-                        header.requestLayout()
-                    }
-                })
-                start()
-            }.also { current.titleCollapsed = false }
-        }
     }
 
     // ── List model / refresh ───────────────────────────────────────────────────
@@ -2686,7 +2553,6 @@ object ClipboardOverlay {
                         (current.groupRecycler.adapter as? ClipAdapter)?.submitList(it) { resizeGroupTray(current) }
                     }
                 }
-                current.countView.text = getString(R.string.clipboard_count, entries.size)
                 current.clearAll.isEnabled = hasClearableHistory
                 current.clearAll.alpha = if (hasClearableHistory) 1f else 0.4f
                 if (!preserveScroll) {
@@ -4388,7 +4254,8 @@ object ClipboardOverlay {
                     label = getString(R.string.clipboard_restore),
                     iconRes = R.drawable.ic_restart_alt
                 ) { onRestoreClicked(current) }
-            )
+            ),
+            title = getString(R.string.clipboard_count, historySnapshot().size)
         )
     }
 
