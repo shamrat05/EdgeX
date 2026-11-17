@@ -449,6 +449,7 @@
     <string name="clipboard_image_pasted">已请求粘贴图片</string>
     <string name="clipboard_image_path_pasted">图片路径已粘贴</string>
     <string name="clipboard_image_share_failed">无法分享图片</string>
+    <string name="clipboard_share_failed">无法分享剪贴板项目</string>
     <string name="clipboard_share">分享</string>
     <string name="clipboard_open_folder">打开所在文件夹</string>
     <string name="clipboard_open_image">打开图片</string>

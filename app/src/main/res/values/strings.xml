@@ -448,6 +448,7 @@
     <string name="clipboard_image_pasted">Image paste requested</string>
     <string name="clipboard_image_path_pasted">Image path pasted</string>
     <string name="clipboard_image_share_failed">Unable to share image</string>
+    <string name="clipboard_share_failed">Unable to share clipboard items</string>
     <string name="clipboard_share">Share</string>
     <string name="clipboard_open_folder">Open containing folder</string>
     <string name="clipboard_open_image">Open image</string>

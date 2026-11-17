@@ -159,7 +159,7 @@ class ClipboardImageBridgeService : Service() {
                 // Android 15 blocks this background service from launching the
                 // viewer. Grant every resolved viewer access here; system_server
                 // performs the visible launch after this Binder call returns.
-                grantResolvedTargets(view, uri)
+                grantResolvedTargets(view, listOf(uri))
             } catch (_: Throwable) {
                 false
             } finally {
@@ -168,21 +168,23 @@ class ClipboardImageBridgeService : Service() {
         }
 
         override fun shareImage(uriValue: String?, mimeType: String?, chooserTitle: String?): Boolean {
-            if (!isSystemServerCaller()) return false
-            val uri = validatedUri(uriValue) ?: return false
+            return prepareImageShare(listOf(uriValue), mimeType)
+        }
+
+        override fun shareImages(uriValues: MutableList<String>?, mimeType: String?): Boolean =
+            prepareImageShare(uriValues.orEmpty(), mimeType)
+
+        private fun prepareImageShare(uriValues: List<String?>, mimeType: String?): Boolean {
+            if (!isSystemServerCaller() || uriValues.isEmpty()) return false
+            val uris = uriValues.map { validatedUri(it) ?: return false }
             val identity = Binder.clearCallingIdentity()
             return try {
                 runCatching {
                     val mime = mimeType?.takeIf(ClipboardImageStore::isSupported)
-                        ?: contentResolver.getType(uri)?.takeIf(ClipboardImageStore::isSupported)
+                        ?: uris.singleOrNull()?.let(contentResolver::getType)
+                            ?.takeIf(ClipboardImageStore::isSupported)
                         ?: "image/*"
-                    val send = Intent(Intent.ACTION_SEND).apply {
-                        type = mime
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        clipData = ClipData.newUri(contentResolver, "Image", uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    grantResolvedTargets(send, uri)
+                    grantResolvedTargets(clipboardShareIntent(null, uris, mime), uris)
                 }.getOrDefault(false)
             } finally {
                 Binder.restoreCallingIdentity(identity)
@@ -248,14 +250,16 @@ class ClipboardImageBridgeService : Service() {
         return uri
     }
 
-    private fun grantResolvedTargets(intent: Intent, uri: Uri): Boolean {
+    private fun grantResolvedTargets(intent: Intent, uris: List<Uri>): Boolean {
         val packages = packageManager.queryIntentActivities(
             intent,
             android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
         ).asSequence().map { it.activityInfo.packageName }.distinct().toList()
         if (packages.isEmpty()) return false
         packages.forEach { packageName ->
-            grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            uris.forEach { uri ->
+                grantUriPermission(packageName, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
         return true
     }

@@ -62,6 +62,7 @@ import com.fan.edgex.config.ClipboardHistorySnapshot
 import com.fan.edgex.config.ScreenshotMediaFilter
 import com.fan.edgex.config.ClipboardImageStore
 import com.fan.edgex.config.HookClipboardHistoryStore
+import com.fan.edgex.config.clipboardShareIntent
 import de.robv.android.xposed.XposedBridge
 import org.json.JSONArray
 import org.json.JSONObject
@@ -2725,8 +2726,11 @@ object ClipboardOverlay {
         current.selectionPaste.alpha = if (count > 0) 1f else 0.45f
     }
 
+    private fun selectedClips(): List<ClipEntry> =
+        historySnapshot().filter { it.id in selectedClipIds }
+
     private fun pasteSelectedClips(current: OverlayUi) {
-        val selected = historySnapshot().filter { it.id in selectedClipIds }
+        val selected = selectedClips()
         if (selected.isEmpty()) {
             clearClipSelection(current)
             return
@@ -3145,44 +3149,48 @@ object ClipboardOverlay {
         }
     }
 
-    private fun shareEntry(context: Context, entry: ClipEntry) {
-        if (entry.type == ClipType.TEXT) {
+    private fun shareEntries(context: Context, entries: List<ClipEntry>) {
+        val text = entries.filter { it.type == ClipType.TEXT }
+            .takeIf { it.isNotEmpty() }?.joinToString("\n") { it.text }
+        val images = entries.filter { it.type == ClipType.IMAGE }
+        val uris = images.map { entry ->
+            ClipboardImageStore.shareUri(context, entry.imagePath) ?: run {
+                Toast.makeText(
+                    context, getString(R.string.clipboard_image_missing), Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+        }
+        val mimeType = images.map { it.mimeType }.distinct().singleOrNull()
+            ?.takeIf(ClipboardImageStore::isSupported) ?: "image/*"
+        val send = clipboardShareIntent(text, uris, mimeType)
+        val title = getString(R.string.clipboard_share)
+        val launch = {
             runCatching {
-                val send = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_TEXT, entry.text)
-                }
                 context.startActivity(
-                    Intent.createChooser(send, getString(R.string.clipboard_share)).addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK
-                    )
+                    Intent.createChooser(send, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 )
             }.onFailure { error ->
-                XposedBridge.log("$TAG: text share failed: ${error.javaClass.simpleName}")
-            }
-            return
+                XposedBridge.log("$TAG: clipboard share failed: ${error.javaClass.simpleName}")
+            }.isSuccess
         }
 
-        val uri = ClipboardImageStore.shareUri(context, entry.imagePath)
-        if (uri == null) {
-            Toast.makeText(context, getString(R.string.clipboard_image_missing), Toast.LENGTH_SHORT)
-                .show()
+        if (uris.isEmpty()) {
+            if (!launch()) {
+                Toast.makeText(
+                    context, getString(R.string.clipboard_share_failed), Toast.LENGTH_SHORT
+                ).show()
+            }
             return
         }
         withImageBridge(context, { bridge ->
-            bridge.shareImage(uri.toString(), entry.mimeType, getString(R.string.clipboard_share))
-        }) { shared ->
-            if (shared) {
-                val send = Intent(Intent.ACTION_SEND).apply {
-                    type = entry.mimeType?.takeIf { it.startsWith("image/") } ?: "image/*"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    clipData = ClipData.newUri(context.contentResolver, "Image", uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                val chooser = Intent.createChooser(send, getString(R.string.clipboard_share))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                if (runCatching { context.startActivity(chooser) }.isSuccess) return@withImageBridge
+            if (uris.size == 1) {
+                bridge.shareImage(uris.single().toString(), images.single().mimeType, title)
+            } else {
+                bridge.shareImages(uris.map(Uri::toString), mimeType)
             }
+        }) { shared ->
+            if (shared && launch()) return@withImageBridge
             Toast.makeText(
                 context, getString(R.string.clipboard_image_share_failed), Toast.LENGTH_SHORT
             ).show()
@@ -4334,9 +4342,14 @@ object ClipboardOverlay {
         items += MenuEntry(
             label = getString(R.string.clipboard_share),
             iconRes = R.drawable.ic_share,
-            dividerAfter = true,
-            externalAction = true
-        ) { shareEntry(current.context, entry) }
+            dividerAfter = true
+        ) {
+            // Dismissing the overlay clears the selection.
+            val entries = if (entry.id in selectedClipIds) selectedClips() else listOf(entry)
+            if (entries.isNotEmpty()) {
+                dismissThenRunExternal { shareEntries(current.context, entries) }
+            }
+        }
         items += MenuEntry(
             label = getString(R.string.clipboard_delete),
             iconRes = R.drawable.ic_delete,
