@@ -523,11 +523,12 @@ object ClipboardOverlay {
         }
 
         private fun createPinnedHolder(context: Context): PinnedHolder {
-            val current = checkNotNull(actionUi())
-            val dp = current::dp
+            val current = actionUi()
+            val density = context.resources.displayMetrics.density
+            val dp = { value: Int -> (value * density + 0.5f).toInt() }
             val lineHeight = TextView(context).apply { textSize = CLIP_TEXT_SP }.lineHeight
             val metaHeight = TextView(context).apply { textSize = CLIP_META_SP }.lineHeight
-            val rowHeight = maxOf(dp(CLIP_IMAGE_DP), 2 * lineHeight + metaHeight + dp(1)) +
+            val rowHeight = maxOf(dp(CLIP_IMAGE_DP), 2 * lineHeight + metaHeight + dp(2)) +
                 2 * dp(CLIP_VERTICAL_PADDING_DP)
             val clipAdapter = ClipAdapter(current, rowHeight)
             val list = PinnedRecyclerView(context).apply {
@@ -539,10 +540,12 @@ object ClipboardOverlay {
                 isNestedScrollingEnabled = false
                 isScrollbarFadingEnabled = false
                 setPaddingRelative(dp(4), dp(4), dp(7), dp(4))
-                background = ClipboardUiKit.rounded(
-                    current.palette.raised, dp(12).toFloat(), dp(1), current.palette.border
-                )
-                clipToOutline = true
+                current?.palette?.let { palette ->
+                    background = ClipboardUiKit.rounded(
+                        palette.raised, dp(12).toFloat(), dp(1), palette.border
+                    )
+                    clipToOutline = true
+                }
             }
             ItemTouchHelper(buildSwipeCallback()).attachToRecyclerView(list)
             return PinnedHolder(list, clipAdapter, rowHeight + dp(CLIP_ROW_GAP_DP))
@@ -3454,9 +3457,10 @@ object ClipboardOverlay {
                             item.right + dX, item.top.toFloat(),
                             item.right.toFloat(), item.bottom.toFloat(), swipePaint
                         )
+                        val pinned = (viewHolder as? ClipHolder)?.bound?.pinned == true
+                        val label = if (pinned) R.string.clipboard_unpin else R.string.clipboard_pin
                         drawSwipeContent(
-                            c, current, R.drawable.ic_pin_filled,
-                            getString(R.string.clipboard_pin),
+                            c, current, R.drawable.ic_pin_filled, getString(label),
                             item.right - current.dp(18), item.top, item.bottom, alignEnd = true
                         )
                     }
