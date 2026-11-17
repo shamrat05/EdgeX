@@ -117,6 +117,8 @@ object ClipboardOverlay {
     private const val MAX_HISTORY = 50
     private const val MAX_PINNED = 50
     private const val MAX_CLIP_PREVIEW_CHARS = 512
+    private const val CLIP_ICON_DP = 14
+    private const val CLIP_ICON_COLUMN_DP = 16
     private const val SEARCH_DEBOUNCE_MS = 50L
 
     private const val TYPE_HEADER = 0
@@ -471,12 +473,12 @@ object ClipboardOverlay {
             val root = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPaddingRelative(dp(8), dp(4), dp(2), dp(4))
+                setPaddingRelative(dp(6), dp(2), dp(2), dp(2))
                 isClickable = true
                 isFocusable = true
                 layoutParams = RecyclerView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = dp(3) }
+                ).apply { bottomMargin = dp(2) }
             }
             val iconColumn = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -485,7 +487,7 @@ object ClipboardOverlay {
             val icon = ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
             }
-            iconColumn.addView(icon, LinearLayout.LayoutParams(dp(18), dp(18)))
+            iconColumn.addView(icon, LinearLayout.LayoutParams(dp(CLIP_ICON_DP), dp(CLIP_ICON_DP)))
             val sourceIcon = ImageView(context).apply {
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
                 visibility = View.GONE
@@ -494,22 +496,23 @@ object ClipboardOverlay {
             }
             iconColumn.addView(
                 sourceIcon,
-                LinearLayout.LayoutParams(dp(14), dp(14)).apply { topMargin = dp(2) }
+                LinearLayout.LayoutParams(dp(12), dp(12)).apply { topMargin = dp(1) }
             )
             root.addView(
                 iconColumn,
-                LinearLayout.LayoutParams(dp(22), ViewGroup.LayoutParams.WRAP_CONTENT)
+                LinearLayout.LayoutParams(dp(CLIP_ICON_COLUMN_DP), ViewGroup.LayoutParams.WRAP_CONTENT)
             )
             val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
             val text = TextView(context).apply {
-                textSize = 13.5f
+                textSize = 12f
+                includeFontPadding = false
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
-                setLineSpacing(dp(1).toFloat(), 1f)
             }
             column.addView(text)
             val meta = TextView(context).apply {
-                textSize = 10.75f
+                textSize = 10f
+                includeFontPadding = false
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
             }
@@ -517,12 +520,12 @@ object ClipboardOverlay {
                 meta,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(2) }
+                ).apply { topMargin = dp(1) }
             )
             root.addView(
                 column,
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    .apply { marginStart = dp(8) }
+                    .apply { marginStart = dp(5) }
             )
 
             val actions = LinearLayout(context).apply {
@@ -533,19 +536,19 @@ object ClipboardOverlay {
                 scaleType = ImageView.ScaleType.CENTER_INSIDE
                 isClickable = true
                 isFocusable = true
-                setPaddingRelative(dp(7), dp(7), dp(7), dp(7))
+                setPaddingRelative(dp(8), dp(8), dp(8), dp(8))
             }
             val pin = actionView()
-            actions.addView(pin, LinearLayout.LayoutParams(dp(30), dp(32)))
+            actions.addView(pin, LinearLayout.LayoutParams(dp(28), dp(32)))
             val copy = actionView()
             actions.addView(
                 copy,
-                LinearLayout.LayoutParams(dp(30), dp(32)).apply { marginStart = dp(1) }
+                LinearLayout.LayoutParams(dp(28), dp(32))
             )
             val more = actionView()
             actions.addView(
                 more,
-                LinearLayout.LayoutParams(dp(27), dp(32)).apply { marginStart = dp(1) }
+                LinearLayout.LayoutParams(dp(26), dp(32))
             )
             root.addView(actions)
 
@@ -679,11 +682,11 @@ object ClipboardOverlay {
                 return
             }
             holder.iconColumn.layoutParams = holder.iconColumn.layoutParams.apply {
-                width = current.dp(22)
+                width = current.dp(CLIP_ICON_COLUMN_DP)
             }
             holder.icon.layoutParams = holder.icon.layoutParams.apply {
-                width = current.dp(18)
-                height = current.dp(18)
+                width = current.dp(CLIP_ICON_DP)
+                height = current.dp(CLIP_ICON_DP)
             }
             holder.icon.background = null
             holder.icon.clipToOutline = false
@@ -784,11 +787,11 @@ object ClipboardOverlay {
             holder.text.text = ClipboardImageStore.displayLabel(current.context, row.entry)
             holder.text.typeface = Typeface.DEFAULT
             holder.iconColumn.layoutParams = holder.iconColumn.layoutParams.apply {
-                width = current.dp(58)
+                width = current.dp(46)
             }
             holder.icon.layoutParams = holder.icon.layoutParams.apply {
-                width = current.dp(52)
-                height = current.dp(52)
+                width = current.dp(42)
+                height = current.dp(42)
             }
             holder.sourceIcon.apply {
                 tag = null
@@ -2161,7 +2164,7 @@ object ClipboardOverlay {
             overScrollMode = View.OVER_SCROLL_NEVER
             clipToPadding = false
             isVerticalScrollBarEnabled = true
-            setPaddingRelative(dp(16), dp(2), dp(16), dp(8))
+            setPaddingRelative(dp(12), dp(2), dp(12), dp(8))
             addOnScrollListener(object : RecyclerView.OnScrollListener() {
                 override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                     val current = currentUi() ?: return
@@ -2222,7 +2225,7 @@ object ClipboardOverlay {
             itemAnimator = null
             overScrollMode = View.OVER_SCROLL_NEVER
             clipToPadding = false
-            setPaddingRelative(dp(10), dp(2), dp(10), dp(5))
+            setPaddingRelative(dp(6), dp(2), dp(6), dp(5))
         }
         groupTray.addView(groupRecycler, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         sheet.addView(groupTray, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40))
