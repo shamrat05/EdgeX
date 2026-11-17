@@ -29,6 +29,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.WindowInsets
@@ -77,6 +78,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.abs
 
 /**
  * System-wide clipboard history overlay (framework Views, system_server).
@@ -118,11 +120,17 @@ object ClipboardOverlay {
     private const val MAX_CLIP_PREVIEW_CHARS = 512
     private const val CLIP_ICON_DP = 14
     private const val CLIP_ICON_COLUMN_DP = 16
+    private const val CLIP_TEXT_SP = 12f
+    private const val CLIP_META_SP = 10f
+    private const val CLIP_IMAGE_DP = 42
+    private const val CLIP_VERTICAL_PADDING_DP = 2
+    private const val CLIP_ROW_GAP_DP = 2
     private const val SEARCH_DEBOUNCE_MS = 50L
 
     private const val TYPE_HEADER = 0
     private const val TYPE_CLIP = 1
     private const val TYPE_MESSAGE = 2
+    private const val TYPE_PINNED = 3
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -223,6 +231,7 @@ object ClipboardOverlay {
         val density: Float = context.resources.displayMetrics.density
         var sheetTop = 0
         var titleCollapsed = false
+        var pinnedRecycler: RecyclerView? = null
         var titleHeaderFullHeight = 0
         var keyboardVisible = false
         var imeInsetsKnown = false
@@ -264,6 +273,43 @@ object ClipboardOverlay {
     ) : RecyclerView.ViewHolder(root) {
         var bound: DisplayRow.Clip? = null
         var selectedState: Boolean? = null
+    }
+
+    private class PinnedHolder(
+        val list: RecyclerView,
+        val clips: ClipAdapter,
+        val rowStride: Int
+    ) : RecyclerView.ViewHolder(list) {
+        var sectionKey: String? = null
+    }
+
+    private class PinnedRecyclerView(context: Context) : RecyclerView(context) {
+        private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+        private var startX = 0f
+        private var startY = 0f
+        private var awaitingDirection = false
+
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    startX = event.x
+                    startY = event.y
+                    awaitingDirection = canScrollVertically(1) || canScrollVertically(-1)
+                    if (awaitingDirection) parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                MotionEvent.ACTION_MOVE -> if (awaitingDirection) {
+                    val dx = event.x - startX
+                    val dy = event.y - startY
+                    if (maxOf(abs(dx), abs(dy)) > touchSlop) {
+                        awaitingDirection = false
+                        if (abs(dy) > abs(dx) &&
+                            !canScrollVertically(if (dy > 0) -1 else 1)
+                        ) parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
+            }
+            return super.dispatchTouchEvent(event)
+        }
     }
 
     private class MessageHolder(
@@ -343,7 +389,8 @@ object ClipboardOverlay {
      * deterministic 64-bit hash of [DisplayRow.stableKey].
      */
     private class ClipAdapter(
-        private val boundUi: OverlayUi? = null
+        private val boundUi: OverlayUi? = null,
+        private val fixedClipHeight: Int = ViewGroup.LayoutParams.WRAP_CONTENT
     ) : ListAdapter<DisplayRow, RecyclerView.ViewHolder>(CLIP_DIFF) {
 
         private fun actionUi(): OverlayUi? = boundUi ?: currentUi()
@@ -358,6 +405,7 @@ object ClipboardOverlay {
             is DisplayRow.Header -> TYPE_HEADER
             is DisplayRow.Clip -> TYPE_CLIP
             is DisplayRow.Message -> TYPE_MESSAGE
+            is DisplayRow.PinnedClips -> TYPE_PINNED
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -365,6 +413,7 @@ object ClipboardOverlay {
             return when (viewType) {
                 TYPE_HEADER -> createHeaderHolder(context)
                 TYPE_CLIP -> createClipHolder(context)
+                TYPE_PINNED -> createPinnedHolder(context)
                 else -> createMessageHolder(context)
             }
         }
@@ -380,6 +429,7 @@ object ClipboardOverlay {
                 is HeaderHolder -> if (row is DisplayRow.Header) bindHeader(holder, row, current)
                 is ClipHolder -> if (row is DisplayRow.Clip) bindClip(holder, row, current)
                 is MessageHolder -> if (row is DisplayRow.Message) bindMessage(holder, row, current)
+                is PinnedHolder -> if (row is DisplayRow.PinnedClips) bindPinned(holder, row, current)
             }
         }
 
@@ -464,6 +514,53 @@ object ClipboardOverlay {
             return holder
         }
 
+        override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+            val current = actionUi()
+            if (holder is PinnedHolder && current != null && current.pinnedRecycler === holder.list) {
+                current.pinnedRecycler = null
+            }
+            super.onViewRecycled(holder)
+        }
+
+        private fun createPinnedHolder(context: Context): PinnedHolder {
+            val current = checkNotNull(actionUi())
+            val dp = current::dp
+            val lineHeight = TextView(context).apply { textSize = CLIP_TEXT_SP }.lineHeight
+            val metaHeight = TextView(context).apply { textSize = CLIP_META_SP }.lineHeight
+            val rowHeight = maxOf(dp(CLIP_IMAGE_DP), 2 * lineHeight + metaHeight + dp(1)) +
+                2 * dp(CLIP_VERTICAL_PADDING_DP)
+            val clipAdapter = ClipAdapter(current, rowHeight)
+            val list = PinnedRecyclerView(context).apply {
+                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
+                layoutManager = LinearLayoutManager(context)
+                adapter = clipAdapter
+                itemAnimator = null
+                overScrollMode = View.OVER_SCROLL_NEVER
+                isNestedScrollingEnabled = false
+                isScrollbarFadingEnabled = false
+                setPaddingRelative(dp(4), dp(4), dp(7), dp(4))
+                background = ClipboardUiKit.rounded(
+                    current.palette.raised, dp(12).toFloat(), dp(1), current.palette.border
+                )
+                clipToOutline = true
+            }
+            ItemTouchHelper(buildSwipeCallback()).attachToRecyclerView(list)
+            return PinnedHolder(list, clipAdapter, rowHeight + dp(CLIP_ROW_GAP_DP))
+        }
+
+        private fun bindPinned(holder: PinnedHolder, row: DisplayRow.PinnedClips, current: OverlayUi) {
+            val list = holder.list
+            current.pinnedRecycler = list
+            val targetHeight = row.visibleRows * holder.rowStride + list.paddingTop + list.paddingBottom
+            if (list.layoutParams.height != targetHeight) {
+                list.layoutParams = list.layoutParams.apply { height = targetHeight }
+            }
+            list.isVerticalScrollBarEnabled = row.clips.size > row.visibleRows
+            val sectionChanged = holder.sectionKey != row.sectionKey
+            holder.sectionKey = row.sectionKey
+            holder.clips.submitList(row.clips) { if (sectionChanged) list.scrollToPosition(0) }
+        }
+
         private fun createClipHolder(context: Context): ClipHolder {
             val density = context.resources.displayMetrics.density
             val dp = { value: Int -> (value * density + 0.5f).toInt() }
@@ -472,12 +569,14 @@ object ClipboardOverlay {
             val root = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPaddingRelative(dp(6), dp(2), dp(2), dp(2))
+                setPaddingRelative(
+                    dp(6), dp(CLIP_VERTICAL_PADDING_DP), dp(2), dp(CLIP_VERTICAL_PADDING_DP)
+                )
                 isClickable = true
                 isFocusable = true
                 layoutParams = RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = dp(2) }
+                    ViewGroup.LayoutParams.MATCH_PARENT, fixedClipHeight
+                ).apply { bottomMargin = dp(CLIP_ROW_GAP_DP) }
             }
             val iconColumn = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -503,14 +602,14 @@ object ClipboardOverlay {
             )
             val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
             val text = TextView(context).apply {
-                textSize = 12f
+                textSize = CLIP_TEXT_SP
                 includeFontPadding = false
                 maxLines = 2
                 ellipsize = TextUtils.TruncateAt.END
             }
             column.addView(text)
             val meta = TextView(context).apply {
-                textSize = 10f
+                textSize = CLIP_META_SP
                 includeFontPadding = false
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
@@ -747,7 +846,7 @@ object ClipboardOverlay {
                 sourceIconLoads.remove(packageName)
                 handler.post {
                     val loaded = synchronized(sourceIconCache) { sourceIconCache[packageName] }
-                    listOf(current.recycler, current.groupRecycler).forEach { recycler ->
+                    listOfNotNull(current.recycler, current.groupRecycler, current.pinnedRecycler).forEach { recycler ->
                         for (index in 0 until recycler.childCount) {
                             val visibleHolder = recycler.getChildViewHolder(
                                 recycler.getChildAt(index)
@@ -789,8 +888,8 @@ object ClipboardOverlay {
                 width = current.dp(46)
             }
             holder.icon.layoutParams = holder.icon.layoutParams.apply {
-                width = current.dp(42)
-                height = current.dp(42)
+                width = current.dp(CLIP_IMAGE_DP)
+                height = current.dp(CLIP_IMAGE_DP)
             }
             holder.sourceIcon.apply {
                 tag = null
@@ -2732,6 +2831,7 @@ object ClipboardOverlay {
 
         notifyIfPresent(adapter)
         notifyIfPresent(ui?.groupRecycler?.adapter as? ClipAdapter)
+        notifyIfPresent(ui?.pinnedRecycler?.adapter as? ClipAdapter)
     }
 
     private fun updateSelectionUi(current: OverlayUi) {
@@ -3303,8 +3403,8 @@ object ClipboardOverlay {
                 recyclerView: RecyclerView,
                 viewHolder: RecyclerView.ViewHolder
             ): Int {
-                val rows = adapter?.currentList ?: return 0
-                val position = viewHolder.adapterPosition
+                val rows = (viewHolder.bindingAdapter as? ClipAdapter)?.currentList ?: return 0
+                val position = viewHolder.bindingAdapterPosition
                 if (position !in rows.indices) return 0
                 return if (rows[position] is DisplayRow.Clip) {
                     makeMovementFlags(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT)
@@ -3315,8 +3415,8 @@ object ClipboardOverlay {
 
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 val current = currentUi() ?: return
-                val rows = adapter?.currentList ?: return
-                val position = viewHolder.adapterPosition
+                val rows = (viewHolder.bindingAdapter as? ClipAdapter)?.currentList ?: return
+                val position = viewHolder.bindingAdapterPosition
                 if (position !in rows.indices) return
                 val row = rows[position] as? DisplayRow.Clip ?: return
                 when (direction) {

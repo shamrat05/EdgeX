@@ -45,7 +45,13 @@ class ClipboardRowModelTest {
         zone = TimeZone.getTimeZone("UTC")
     )
 
-    private fun clips(rows: List<DisplayRow>): List<DisplayRow.Clip> = rows.filterIsInstance<DisplayRow.Clip>()
+    private fun clips(rows: List<DisplayRow>): List<DisplayRow.Clip> = rows.flatMap { row ->
+        when (row) {
+            is DisplayRow.Clip -> listOf(row)
+            is DisplayRow.PinnedClips -> row.clips
+            else -> emptyList()
+        }
+    }
 
     @Test
     fun `empty history yields a single empty message`() {
@@ -141,6 +147,23 @@ class ClipboardRowModelTest {
         val entries = (1..5).map { ClipEntry("clip $it") }
         val rows = build(entries)
         assertEquals(5, clips(rows).size)
+    }
+
+    @Test
+    fun `pinned viewport shows at most five rows and keeps every pinned clip`() {
+        val pinned = (1..60).map { ClipEntry("pinned $it", pinned = true) }
+        val ordinary = ClipEntry("ordinary")
+        val rows = build(pinned + ordinary)
+        val container = rows.filterIsInstance<DisplayRow.PinnedClips>().single()
+
+        assertEquals(5, container.visibleRows)
+        assertEquals(pinned, container.clips.map { it.entry })
+        assertEquals(ordinary, rows.filterIsInstance<DisplayRow.Clip>().single().entry)
+
+        val filtered = build(pinned, query = "pinned 60").filterIsInstance<DisplayRow.PinnedClips>().single()
+        assertEquals(1, filtered.visibleRows)
+        assertEquals(pinned.last(), filtered.clips.single().entry)
+        assertTrue(build(pinned, collapsed = setOf("pinned")).none { it is DisplayRow.PinnedClips })
     }
 
     @Test

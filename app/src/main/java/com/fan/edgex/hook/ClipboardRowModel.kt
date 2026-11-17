@@ -51,6 +51,11 @@ internal sealed class DisplayRow {
         override val stableKey: String get() = "clip:${entry.id}"
     }
 
+    data class PinnedClips(val sectionKey: String, val clips: List<Clip>) : DisplayRow() {
+        override val stableKey: String get() = "pinned:$sectionKey"
+        val visibleRows: Int get() = clips.size.coerceAtMost(5)
+    }
+
     data class Message(
         val title: String,
         val secondary: String?,
@@ -194,12 +199,13 @@ internal object ClipboardRowModel {
             icon = icon
         )
         if (isCollapsed) return
-        items.forEach { entry ->
-            rows += DisplayRow.Clip(
-                entry = entry,
-                kind = kindOf(entry),
-                meta = metaOf(entry)
-            )
+        val clips = items.map { entry ->
+            DisplayRow.Clip(entry = entry, kind = kindOf(entry), meta = metaOf(entry))
+        }
+        if (icon == RowIcon.PIN) {
+            rows += DisplayRow.PinnedClips(key, clips)
+        } else {
+            rows.addAll(clips)
         }
     }
 }
