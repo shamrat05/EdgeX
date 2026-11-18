@@ -69,6 +69,8 @@ import com.fan.edgex.config.ScreenshotMediaFilter
 import com.fan.edgex.config.ClipboardImageStore
 import com.fan.edgex.config.HookClipboardHistoryStore
 import com.fan.edgex.config.clipboardShareIntent
+import com.fan.edgex.config.removeClips
+import com.fan.edgex.config.restoreClips
 import de.robv.android.xposed.XposedBridge
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1499,18 +1501,7 @@ object ClipboardOverlay {
     @Synchronized
     private fun removeEntries(ids: Set<String>): List<Pair<ClipEntry, Int>> {
         ensureHistoryLoadedLocked()
-        val removed = ArrayList<Pair<ClipEntry, Int>>()
-        var index = 0
-        val iterator = history.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            if (entry.id in ids) {
-                removed += entry to index
-                iterator.remove()
-            } else {
-                index++
-            }
-        }
+        val removed = history.removeClips(ids)
         if (removed.isNotEmpty()) persistLocked()
         return removed
     }
@@ -1518,10 +1509,7 @@ object ClipboardOverlay {
     @Synchronized
     private fun restoreEntries(removed: List<Pair<ClipEntry, Int>>) {
         ensureHistoryLoadedLocked()
-        val ids = history.mapTo(HashSet()) { it.id }
-        for ((entry, index) in removed.asReversed()) {
-            if (ids.add(entry.id)) history.add(index.coerceIn(0, history.size), entry)
-        }
+        history.restoreClips(removed)
         persistLocked()
     }
 
@@ -2779,13 +2767,14 @@ object ClipboardOverlay {
         } else if (clips.any { it.type == ClipType.IMAGE }) {
             writeClipBatch(current.context, clips) { copied ->
                 if (copied) {
-                    dismissThenRunExternal {
+                    val notify = {
                         Toast.makeText(
                             current.context, getString(R.string.clipboard_batch_paste_manual),
                             Toast.LENGTH_LONG
                         ).show()
                     }
-                } else {
+                    if (currentUi() === current) dismissThenRunExternal(notify) else notify()
+                } else if (currentUi() === current) {
                     showInfoSnackbar(current, getString(R.string.clipboard_copy_failed))
                 }
             }
@@ -4269,7 +4258,7 @@ object ClipboardOverlay {
                 onDone(success, output)
             }
             timeout = Runnable { finish(false, "backup service timed out") }
-            handler.postDelayed(timeout, 30_000L)
+            handler.postDelayed(timeout, 180_000L)
             try {
                 val (reader, writer) = ParcelFileDescriptor.createPipe()
                 try {

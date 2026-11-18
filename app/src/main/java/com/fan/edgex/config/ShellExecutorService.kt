@@ -15,8 +15,6 @@ import com.fan.edgex.IShellExecutor
 import com.topjohnwu.superuser.Shell
 import java.io.File
 import java.io.IOException
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 class ShellExecutorService : Service() {
 
@@ -143,14 +141,11 @@ class ShellExecutorService : Service() {
             callback: IShellCallback?,
             readManifest: () -> ByteArray
         ) {
-            runProtected("clipboard-backup") {
+            runProtected("clipboard-backup", timeoutMs = 180_000L) {
                 var pending: File? = null
                 var archive: File? = null
                 try {
                     val manifest = readManifest()
-                    if (manifest.size !in 1..ClipboardBackupArchive.MAX_MANIFEST_BYTES) {
-                        throw IOException("backup manifest is too large")
-                    }
                     val name = archiveName?.takeIf(ClipboardBackupArchive.backupName::matches)
                         ?: throw IOException("invalid backup name")
                     val paths = imagePaths.orEmpty().distinct()
@@ -159,9 +154,6 @@ class ShellExecutorService : Service() {
                         ClipboardImageStore.fileFor(this@ShellExecutorService, path)
                             ?: throw IOException("invalid backup image")
                     }.distinctBy(File::getName)
-                    if (manifest.size + images.sumOf(File::length) > ClipboardBackupArchive.MAX_BYTES) {
-                        throw IOException("backup exceeds size limit")
-                    }
 
                     val directory = File(
                         createDeviceProtectedStorageContext().filesDir,
@@ -173,18 +165,7 @@ class ShellExecutorService : Service() {
                     archive = File(directory, name)
                     pending = File(directory, "$name.tmp")
                     pending.delete()
-                    ZipOutputStream(pending.outputStream().buffered(64 * 1024)).use { zip ->
-                        zip.putNextEntry(ZipEntry("manifest.json"))
-                        zip.write(manifest)
-                        zip.closeEntry()
-                        images.forEach { image ->
-                            zip.putNextEntry(ZipEntry("images/${image.name}"))
-                            image.inputStream().buffered(64 * 1024).use {
-                                it.copyTo(zip, 64 * 1024)
-                            }
-                            zip.closeEntry()
-                        }
-                    }
+                    ClipboardBackupArchive.writeZip(pending, manifest, images)
                     if (!pending.renameTo(archive)) {
                         pending.copyTo(archive, overwrite = true)
                         pending.delete()
@@ -229,7 +210,7 @@ class ShellExecutorService : Service() {
      * A bounded partial wake lock keeps only the active operation schedulable;
      * it is released immediately on completion and has a hard timeout.
      */
-    private fun runProtected(name: String, operation: () -> Unit) {
+    private fun runProtected(name: String, timeoutMs: Long = OPERATION_WAKE_LOCK_MS, operation: () -> Unit) {
         Thread({
             val power = getSystemService(POWER_SERVICE) as PowerManager
             val wakeLock = power.newWakeLock(
@@ -237,7 +218,7 @@ class ShellExecutorService : Service() {
                 "EdgeX:$name"
             ).apply { setReferenceCounted(false) }
             try {
-                wakeLock.acquire(OPERATION_WAKE_LOCK_MS)
+                wakeLock.acquire(timeoutMs)
                 operation()
             } finally {
                 if (wakeLock.isHeld) wakeLock.release()

@@ -64,6 +64,28 @@ data class ClipEntry(
         }
 }
 
+internal fun MutableList<ClipEntry>.removeClips(ids: Set<String>): List<Pair<ClipEntry, Int>> {
+    val removed = ArrayList<Pair<ClipEntry, Int>>()
+    var index = 0
+    removeAll { entry ->
+        if (entry.id in ids) {
+            removed += entry to index
+            true
+        } else {
+            index++
+            false
+        }
+    }
+    return removed
+}
+
+internal fun MutableList<ClipEntry>.restoreClips(removed: List<Pair<ClipEntry, Int>>) {
+    val ids = mapTo(HashSet()) { it.id }
+    for ((entry, index) in removed.asReversed()) {
+        if (ids.add(entry.id)) add(index.coerceIn(0, size), entry)
+    }
+}
+
 internal object ClipboardHistoryRetention {
     const val DURATION_MILLIS = 30L * 24 * 60 * 60 * 1_000
 
