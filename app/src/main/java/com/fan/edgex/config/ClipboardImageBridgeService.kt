@@ -25,6 +25,30 @@ class ClipboardImageBridgeService : Service() {
     @Volatile private var registeredImeDeath: IBinder.DeathRecipient? = null
 
     private val bridge = object : IClipboardImageBridge.Stub() {
+        override fun setClipboardItems(data: ClipData?): Boolean {
+            if (!isSystemServerCaller() || data == null || data.itemCount == 0 ||
+                data.description.label?.toString() != CLIPBOARD_BATCH_LABEL
+            ) return false
+            for (index in 0 until data.itemCount) {
+                val item = data.getItemAt(index)
+                if (item.intent != null || item.htmlText != null ||
+                    (item.uri == null) == (item.text == null) ||
+                    (item.uri != null && validatedUri(item.uri.toString()) == null)
+                ) return false
+            }
+            val identity = Binder.clearCallingIdentity()
+            return try {
+                runCatching {
+                    val clipboard = getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager
+                        ?: return@runCatching false
+                    clipboard.setPrimaryClip(data)
+                    true
+                }.getOrDefault(false)
+            } finally {
+                Binder.restoreCallingIdentity(identity)
+            }
+        }
+
         @Suppress("UNUSED_PARAMETER")
         override fun setImageClip(
             uriValue: String?,

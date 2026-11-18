@@ -17,6 +17,7 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import com.fan.edgex.BuildConfig
 import com.fan.edgex.config.ClipboardImageStore
+import com.fan.edgex.config.CLIPBOARD_BATCH_LABEL
 import com.fan.edgex.config.ScreenshotMediaFilter
 import com.fan.edgex.IShellCallback
 import com.fan.edgex.IShellExecutor
@@ -91,6 +92,10 @@ object ClipboardHook {
             } catch (_: Throwable) {
                 -1
             }
+            if (clip.description.label?.toString() == CLIPBOARD_BATCH_LABEL &&
+                runCatching { context?.packageManager?.getPackageUid(BuildConfig.APPLICATION_ID, 0) }
+                    .getOrNull() == sourceUid
+            ) return
             val timestamp = System.currentTimeMillis()
 
             val image = extractImage(clip)

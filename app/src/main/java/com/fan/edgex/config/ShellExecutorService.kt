@@ -15,7 +15,6 @@ import com.fan.edgex.IShellExecutor
 import com.topjohnwu.superuser.Shell
 import java.io.File
 import java.io.IOException
-import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -113,44 +112,72 @@ class ShellExecutorService : Service() {
                 callback?.onResult(false, "caller rejected")
                 return
             }
+            createBackup(imagePaths, archiveName, true, callback) {
+                manifestJson?.toByteArray(Charsets.UTF_8) ?: throw IOException("missing backup manifest")
+            }
+        }
+
+        override fun createClipboardBackupFromStream(
+            manifest: ParcelFileDescriptor?,
+            imagePaths: MutableList<String>?,
+            archiveName: String?,
+            toDownloads: Boolean,
+            callback: IShellCallback?
+        ) {
+            if (!isSystemServerCaller() || manifest == null) {
+                manifest?.close()
+                callback?.onResult(false, "backup request rejected")
+                return
+            }
+            createBackup(imagePaths, archiveName, toDownloads, callback) {
+                ParcelFileDescriptor.AutoCloseInputStream(manifest).use {
+                    it.readNBytes(ClipboardBackupArchive.MAX_MANIFEST_BYTES + 1)
+                }
+            }
+        }
+
+        private fun createBackup(
+            imagePaths: List<String>?,
+            archiveName: String?,
+            toDownloads: Boolean,
+            callback: IShellCallback?,
+            readManifest: () -> ByteArray
+        ) {
             runProtected("clipboard-backup") {
                 var pending: File? = null
+                var archive: File? = null
                 try {
-                    val manifest = manifestJson
-                        ?.takeIf { it.toByteArray(Charsets.UTF_8).size <= 16 * 1024 * 1024 }
-                        ?: throw IOException("invalid backup manifest")
-                    val name = archiveName
-                        ?.takeIf { BACKUP_NAME.matches(it) }
+                    val manifest = readManifest()
+                    if (manifest.size !in 1..ClipboardBackupArchive.MAX_MANIFEST_BYTES) {
+                        throw IOException("backup manifest is too large")
+                    }
+                    val name = archiveName?.takeIf(ClipboardBackupArchive.backupName::matches)
                         ?: throw IOException("invalid backup name")
                     val paths = imagePaths.orEmpty().distinct()
-                    if (paths.size > 100) throw IOException("too many backup images")
+                    if (paths.size > ClipboardBackupArchive.MAX_IMAGES) throw IOException("too many backup images")
+                    val images = paths.map { path ->
+                        ClipboardImageStore.fileFor(this@ShellExecutorService, path)
+                            ?: throw IOException("invalid backup image")
+                    }.distinctBy(File::getName)
+                    if (manifest.size + images.sumOf(File::length) > ClipboardBackupArchive.MAX_BYTES) {
+                        throw IOException("backup exceeds size limit")
+                    }
 
                     val directory = File(
                         createDeviceProtectedStorageContext().filesDir,
-                        "clipboard_backups"
+                        ClipboardBackupArchive.BACKUP_DIRECTORY
                     )
                     if (!directory.isDirectory && !directory.mkdirs()) {
                         throw IOException("backup directory unavailable")
                     }
-                    val archive = File(directory, name)
+                    archive = File(directory, name)
                     pending = File(directory, "$name.tmp")
                     pending.delete()
-                    val seenNames = HashSet<String>()
-                    // Clipboard images are already JPEG/PNG/WebP compressed.
-                    // Storing them avoids wasting CPU, battery and time trying
-                    // to recompress bytes that cannot meaningfully shrink.
                     ZipOutputStream(pending.outputStream().buffered(64 * 1024)).use { zip ->
-                        zip.setLevel(Deflater.NO_COMPRESSION)
                         zip.putNextEntry(ZipEntry("manifest.json"))
-                        zip.write(manifest.toByteArray(Charsets.UTF_8))
+                        zip.write(manifest)
                         zip.closeEntry()
-                        paths.forEach { path ->
-                            val image = ClipboardImageStore.fileFor(
-                                this@ShellExecutorService,
-                                path
-                            )
-                                ?: throw IOException("invalid backup image")
-                            if (!seenNames.add(image.name)) return@forEach
+                        images.forEach { image ->
                             zip.putNextEntry(ZipEntry("images/${image.name}"))
                             image.inputStream().buffered(64 * 1024).use {
                                 it.copyTo(zip, 64 * 1024)
@@ -164,6 +191,10 @@ class ShellExecutorService : Service() {
                     }
                     if (!archive.isFile || archive.length() == 0L) {
                         throw IOException("backup archive is empty")
+                    }
+                    if (!toDownloads) {
+                        callback?.onResult(true, name)
+                        return@runProtected
                     }
                     val publicDirectory = "/data/media/0/Download/EdgeX"
                     val publicArchive = "$publicDirectory/$name"
@@ -184,6 +215,7 @@ class ShellExecutorService : Service() {
                     callback?.onResult(true, "/sdcard/Download/EdgeX/$name")
                 } catch (e: Exception) {
                     pending?.delete()
+                    archive?.delete()
                     callback?.onResult(false, "${e.javaClass.simpleName}: ${e.message.orEmpty()}")
                 }
             }
@@ -221,6 +253,5 @@ class ShellExecutorService : Service() {
 
     private companion object {
         const val OPERATION_WAKE_LOCK_MS = 60_000L
-        val BACKUP_NAME = Regex("edgex-clipboard-[0-9]{8}-[0-9]{6}-[0-9]{3}\\.zip")
     }
 }

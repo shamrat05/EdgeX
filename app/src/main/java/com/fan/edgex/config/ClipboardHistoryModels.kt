@@ -1,5 +1,7 @@
 package com.fan.edgex.config
 
+internal const val CLIPBOARD_BATCH_LABEL = "EdgeX selection"
+
 /** Content kind of a clipboard record. */
 enum class ClipType { TEXT, IMAGE }
 

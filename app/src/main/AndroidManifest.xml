@@ -35,6 +35,13 @@
                 android:resource="@array/edgex_xposed_scope" />
 
         <activity
+            android:name=".config.ClipboardBackupDocumentActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:permission="android.permission.MANAGE_USERS" />
+
+        <activity
                 android:name=".ui.MainActivity"
                 android:exported="true">
             <intent-filter>

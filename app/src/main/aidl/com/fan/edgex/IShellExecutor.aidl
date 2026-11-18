@@ -8,4 +8,6 @@ oneway interface IShellExecutor {
     void savePngToGallery(in ParcelFileDescriptor png, String displayName, IShellCallback callback);
     void createClipboardBackup(String manifestJson, in List<String> imagePaths,
         String archiveName, IShellCallback callback);
+    void createClipboardBackupFromStream(in ParcelFileDescriptor manifest,
+        in List<String> imagePaths, String archiveName, boolean toDownloads, IShellCallback callback);
 }

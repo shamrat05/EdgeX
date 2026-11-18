@@ -1,5 +1,6 @@
 package com.fan.edgex;
 
+import android.content.ClipData;
 import android.graphics.Bitmap;
 
 interface IClipboardImageBridge {
@@ -13,4 +14,5 @@ interface IClipboardImageBridge {
     boolean shareImage(String uri, String mimeType, String chooserTitle);
     Bitmap loadImageThumbnail(String uri, int targetPx);
     boolean shareImages(in List<String> uris, String mimeType);
+    boolean setClipboardItems(in ClipData data);
 }

@@ -1,6 +1,7 @@
 package com.fan.edgex.hook
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
@@ -13,9 +14,12 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.os.Binder
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.Editable
@@ -53,8 +57,11 @@ import com.fan.edgex.IClipboardImageBridge
 import com.fan.edgex.IShellCallback
 import com.fan.edgex.IShellExecutor
 import com.fan.edgex.R
+import com.fan.edgex.config.CLIPBOARD_BATCH_LABEL
 import com.fan.edgex.config.ClipEntry
 import com.fan.edgex.config.ClipType
+import com.fan.edgex.config.ClipboardBackupArchive
+import com.fan.edgex.config.ClipboardBackupDocumentActivity
 import com.fan.edgex.config.ClipboardHistoryMerge
 import com.fan.edgex.config.ClipboardHistoryRetention
 import com.fan.edgex.config.ClipboardHistorySnapshot
@@ -122,6 +129,7 @@ object ClipboardOverlay {
     private const val CLIP_IMAGE_DP = 42
     private const val CLIP_VERTICAL_PADDING_DP = 2
     private const val CLIP_ROW_GAP_DP = 2
+    private const val GROUP_DOCK_HEIGHT_DP = 44
     private const val SEARCH_DEBOUNCE_MS = 50L
 
     private const val TYPE_HEADER = 0
@@ -219,8 +227,6 @@ object ClipboardOverlay {
         val clearAll: TextView,
         val selectionBar: LinearLayout,
         val selectionCount: TextView,
-        val selectionPaste: TextView,
-        val selectionCancel: TextView,
         val hintBar: View?
     ) {
         val density: Float = context.resources.displayMetrics.density
@@ -345,7 +351,7 @@ object ClipboardOverlay {
     private data class GroupDockItem(val name: String, val count: Int)
 
     private class GroupDockAdapter(
-        private val current: () -> OverlayUi?,
+        private val ui: OverlayUi,
         private val onSelect: (String) -> Unit
     ) : ListAdapter<GroupDockItem, GroupDockAdapter.Holder>(
         object : DiffUtil.ItemCallback<GroupDockItem>() {
@@ -357,11 +363,11 @@ object ClipboardOverlay {
             RecyclerView.ViewHolder(root) { var item: GroupDockItem? = null }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
-            val ui = current() ?: error("clipboard UI unavailable")
             val context = parent.context
             val icon = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_INSIDE }
             val title = TextView(context).apply {
-                textSize = 12.5f
+                textSize = 12f
+                maxWidth = ui.dp(100)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 setTextColor(ui.palette.textPrimary)
@@ -371,7 +377,6 @@ object ClipboardOverlay {
                 maxLines = 1
                 setTextColor(ui.palette.textSecondary)
                 setPaddingRelative(ui.dp(5), 0, ui.dp(5), 0)
-                background = ClipboardUiKit.rounded(ui.palette.raised, ui.dp(8).toFloat())
             }
             val root = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -380,9 +385,10 @@ object ClipboardOverlay {
                 isFocusable = true
                 setPaddingRelative(ui.dp(10), 0, ui.dp(10), 0)
                 background = ClipboardUiKit.ripple(rippleColor(ui.palette))
-                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(42))
-                addView(icon, LinearLayout.LayoutParams(ui.dp(16), ui.dp(16)))
-                addView(title, LinearLayout.LayoutParams(ui.dp(104), ViewGroup.LayoutParams.WRAP_CONTENT)
+                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(34))
+                    .apply { marginEnd = ui.dp(3) }
+                addView(icon, LinearLayout.LayoutParams(ui.dp(13), ui.dp(13)))
+                addView(title, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     .apply { marginStart = ui.dp(6) })
                 addView(count, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(18))
                     .apply { marginStart = ui.dp(5) })
@@ -395,14 +401,17 @@ object ClipboardOverlay {
         override fun onBindViewHolder(holder: Holder, position: Int) {
             val item = getItem(position)
             holder.item = item
-            val ui = current() ?: return
             holder.icon.setImageDrawable(ClipboardUiKit.icon(holder.root.context, R.drawable.ic_folder, ui.palette.accent))
             holder.title.text = item.name
             holder.count.text = item.count.toString()
             val selected = ui.expandedGroup == item.name
-            holder.root.background = if (selected) {
-                ClipboardUiKit.rounded(ui.palette.accentAlpha(0.14f), ui.dp(12).toFloat(), ui.dp(1), ui.palette.accentAlpha(0.28f))
-            } else ClipboardUiKit.ripple(rippleColor(ui.palette))
+            holder.root.isSelected = selected
+            holder.root.background = ClipboardUiKit.cardRipple(
+                if (selected) ui.palette.accentAlpha(0.19f) else Color.TRANSPARENT,
+                ui.dp(17).toFloat(), ui.dp(1),
+                if (selected) ui.palette.accentAlpha(0.25f) else Color.TRANSPARENT,
+                rippleColor(ui.palette)
+            )
         }
     }
 
@@ -713,14 +722,12 @@ object ClipboardOverlay {
                 true
             }
             pin.setOnClickListener {
-                holder.bound?.let { row -> actionUi()?.let { togglePinAndRefresh(it, row.entry) } }
+                val entry = holder.bound?.entry ?: return@setOnClickListener
+                actionUi()?.let { togglePinAndRefresh(it, actionClips(entry)) }
             }
             copy.setOnClickListener {
-                holder.bound?.let { row ->
-                    actionUi()?.let {
-                        if (row.isImage) copyImageEntry(it, row.entry) else copyEntry(it, row.text)
-                    }
-                }
+                val entry = holder.bound?.entry ?: return@setOnClickListener
+                actionUi()?.let { copyClips(it, actionClips(entry)) }
             }
             more.setOnClickListener {
                 holder.bound?.let { row -> actionUi()?.let { showItemMenu(it, more, row.entry) } }
@@ -1482,31 +1489,39 @@ object ClipboardOverlay {
         return changed
     }
 
-    @Synchronized
-    private fun togglePin(id: String) {
-        ensureHistoryLoadedLocked()
-        val index = history.indexOfFirst { it.id == id }
-        if (index < 0) return
-        val entry = history[index]
-        history[index] = entry.copy(pinned = !entry.pinned)
-        persistLocked()
+    private fun editEntriesLocked(ids: Set<String>, transform: (ClipEntry) -> ClipEntry) {
+        for (index in history.indices) {
+            val entry = history[index]
+            if (entry.id in ids) history[index] = transform(entry)
+        }
     }
 
     @Synchronized
-    private fun removeEntry(id: String): Pair<ClipEntry, Int>? {
+    private fun removeEntries(ids: Set<String>): List<Pair<ClipEntry, Int>> {
         ensureHistoryLoadedLocked()
-        val index = history.indexOfFirst { it.id == id }
-        if (index < 0) return null
-        val removed = history.removeAt(index)
-        persistLocked()
-        return removed to index
+        val removed = ArrayList<Pair<ClipEntry, Int>>()
+        var index = 0
+        val iterator = history.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry.id in ids) {
+                removed += entry to index
+                iterator.remove()
+            } else {
+                index++
+            }
+        }
+        if (removed.isNotEmpty()) persistLocked()
+        return removed
     }
 
     @Synchronized
-    private fun restoreEntry(entry: ClipEntry, index: Int) {
+    private fun restoreEntries(removed: List<Pair<ClipEntry, Int>>) {
         ensureHistoryLoadedLocked()
-        if (history.any { it.id == entry.id }) return
-        history.add(index.coerceIn(0, history.size), entry)
+        val ids = history.mapTo(HashSet()) { it.id }
+        for ((entry, index) in removed.asReversed()) {
+            if (ids.add(entry.id)) history.add(index.coerceIn(0, history.size), entry)
+        }
         persistLocked()
     }
 
@@ -1558,11 +1573,12 @@ object ClipboardOverlay {
     }
 
     @Synchronized
-    private fun createGroup(name: String): Boolean {
+    private fun createGroup(name: String, clipIds: Set<String> = emptySet()): Boolean {
         ensureHistoryLoadedLocked()
         val trimmed = name.trim()
         if (trimmed.isEmpty() || groups.any { it.equals(trimmed, ignoreCase = true) }) return false
         groups.add(trimmed)
+        if (clipIds.isNotEmpty()) editEntriesLocked(clipIds) { it.copy(group = trimmed) }
         persistLocked()
         return true
     }
@@ -1594,11 +1610,10 @@ object ClipboardOverlay {
     }
 
     @Synchronized
-    private fun moveToGroup(id: String, group: String?) {
+    private fun moveToGroup(ids: Set<String>, group: String?) {
         ensureHistoryLoadedLocked()
-        val index = history.indexOfFirst { it.id == id }
-        if (index < 0) return
-        history[index] = history[index].copy(group = group)
+        if (group != null && group !in groups) return
+        editEntriesLocked(ids) { it.copy(group = group) }
         persistLocked()
     }
 
@@ -1835,8 +1850,6 @@ object ClipboardOverlay {
                 clearAll = TextView(context),
                 selectionBar = LinearLayout(context),
                 selectionCount = TextView(context),
-                selectionPaste = TextView(context),
-                selectionCancel = TextView(context),
                 hintBar = null,
                 bottomSpacer = View(context)
             )
@@ -1855,6 +1868,17 @@ object ClipboardOverlay {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
+        )
+
+        built.selectionBar.visibility = View.GONE
+        transientLayer.addView(
+            built.selectionBar,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, dp(42), Gravity.BOTTOM or Gravity.END
+            ).apply {
+                marginEnd = dp(12)
+                bottomMargin = bottomSafeArea + dp(GROUP_DOCK_HEIGHT_DP + 10)
+            }
         )
 
         val newUi = OverlayUi(
@@ -1878,8 +1902,6 @@ object ClipboardOverlay {
             clearAll = built.clearAll,
             selectionBar = built.selectionBar,
             selectionCount = built.selectionCount,
-            selectionPaste = built.selectionPaste,
-            selectionCancel = built.selectionCancel,
             hintBar = built.hintBar
         )
         ui = newUi
@@ -1887,9 +1909,7 @@ object ClipboardOverlay {
         adapter = newAdapter
         built.recycler.adapter = newAdapter
         built.groupRecycler.adapter = ClipAdapter(newUi)
-        built.groupDock.adapter = GroupDockAdapter({ currentUi() }) { name -> toggleGroupTray(newUi, name) }
-        built.selectionPaste.setOnClickListener { pasteSelectedClips(newUi) }
-        built.selectionCancel.setOnClickListener { clearClipSelection(newUi) }
+        built.groupDock.adapter = GroupDockAdapter(newUi) { name -> toggleGroupTray(newUi, name) }
         ItemTouchHelper(buildSwipeCallback()).attachToRecyclerView(built.recycler)
 
         // The handle is a dedicated drag target, so list scrolling and item
@@ -1973,6 +1993,7 @@ object ClipboardOverlay {
                 val visible = shrunk > dp(100)
                 if (visible != newUi.keyboardVisible) {
                     newUi.keyboardVisible = visible
+                    positionSelectionPanel(newUi)
                     sheetHolder.requestLayout()
                 }
             }
@@ -2017,7 +2038,17 @@ object ClipboardOverlay {
             }
         }
 
-        if (visible != wasVisible) current.sheet.requestLayout()
+        if (visible != wasVisible) {
+            positionSelectionPanel(current)
+            current.sheet.requestLayout()
+        }
+    }
+
+    private fun positionSelectionPanel(current: OverlayUi) {
+        val params = current.selectionBar.layoutParams as FrameLayout.LayoutParams
+        params.bottomMargin = current.dp(GROUP_DOCK_HEIGHT_DP + 10) +
+            if (current.keyboardVisible) 0 else current.bottomSafeArea
+        current.selectionBar.layoutParams = params
     }
 
     private class SheetLayout(
@@ -2055,8 +2086,6 @@ object ClipboardOverlay {
         val clearAll: TextView,
         val selectionBar: LinearLayout,
         val selectionCount: TextView,
-        val selectionPaste: TextView,
-        val selectionCancel: TextView,
         val hintBar: View?,
         val bottomSpacer: View
     )
@@ -2183,57 +2212,52 @@ object ClipboardOverlay {
             gravity = Gravity.CENTER_VERTICAL
             setPaddingRelative(dp(12), 0, dp(8), 0)
             background = ClipboardUiKit.rounded(
-                palette.accentAlpha(0.10f), dp(12).toFloat(), dp(1),
-                palette.accentAlpha(0.24f)
+                palette.raised, dp(14).toFloat(), dp(1), palette.accentAlpha(0.36f)
             )
             visibility = View.GONE
         }
         val selectionCount = TextView(context).apply {
             text = getString(R.string.clipboard_selected_count, 0)
-            textSize = 13f
+            textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(palette.textPrimary)
             maxLines = 1
+            maxWidth = dp(112)
+            ellipsize = TextUtils.TruncateAt.END
         }
         selectionBar.addView(
             selectionCount,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .apply { marginEnd = dp(4) }
         )
-        val selectionCancel = TextView(context).apply {
-            text = getString(R.string.clipboard_cancel)
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(palette.textSecondary)
-            gravity = Gravity.CENTER
-            setPaddingRelative(dp(10), 0, dp(10), 0)
-            background = ClipboardUiKit.ripple(rippleColor(palette))
-        }
-        selectionBar.addView(
-            selectionCancel,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34))
-        )
-        val selectionPaste = TextView(context).apply {
-            text = getString(R.string.clipboard_paste)
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(palette.accent)
-            gravity = Gravity.CENTER
-            setPaddingRelative(dp(12), 0, dp(12), 0)
-            background = ClipboardUiKit.ripple(rippleColor(palette))
-        }
-        selectionBar.addView(
-            selectionPaste,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34))
-                .apply { marginStart = dp(4) }
-        )
-        sheet.addView(
-            selectionBar,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42)).apply {
-                marginStart = dp(18)
-                marginEnd = dp(18)
-                bottomMargin = dp(6)
+        fun selectionButton(@StringRes label: Int, onClick: (OverlayUi, List<ClipEntry>) -> Unit) =
+            TextView(context).apply {
+                text = getString(label)
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(palette.accent)
+                gravity = Gravity.CENTER
+                setPaddingRelative(dp(8), 0, dp(8), 0)
+                background = ClipboardUiKit.ripple(rippleColor(palette))
+                setOnClickListener {
+                    val current = currentUi() ?: return@setOnClickListener
+                    val clips = selectedClips()
+                    if (clips.isNotEmpty()) onClick(current, clips)
+                }
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36))
             }
-        )
+        selectionBar.addView(selectionButton(R.string.clipboard_copy, ::copyClips))
+        selectionBar.addView(selectionButton(R.string.clipboard_paste, ::pasteClips))
+        val selectionMore = actionIcon(
+            context, R.drawable.ic_more_vert, palette, palette.textPrimary, dp(32), dp(36),
+            getString(R.string.clipboard_selection_actions)
+        ) { }
+        selectionMore.setOnClickListener { currentUi()?.let { showSelectionMenu(it, selectionMore) } }
+        selectionBar.addView(selectionMore)
+        selectionBar.addView(actionIcon(
+            context, R.drawable.ic_close, palette, palette.textSecondary, dp(30), dp(36),
+            getString(R.string.clipboard_cancel)
+        ) { currentUi()?.let(::clearClipSelection) })
 
         // ── Recycled list ──────────────────────────────────────────────────────
         val recyclerContext = ModuleRes.contextWithModuleResources(context)
@@ -2311,11 +2335,10 @@ object ClipboardOverlay {
         val dockWrap = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPaddingRelative(dp(8), dp(5), dp(8), dp(5))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(palette.sheet)
-                setStroke(dp(1), palette.border)
-            }
+            setPaddingRelative(dp(4), 0, dp(2), 0)
+            background = ClipboardUiKit.rounded(
+                palette.sheet, dp(22).toFloat(), dp(1), palette.border
+            )
         }
         val groupDock = RecyclerView(recyclerContext).apply {
             layoutManager = LinearLayoutManager(recyclerContext, RecyclerView.HORIZONTAL, false)
@@ -2323,10 +2346,17 @@ object ClipboardOverlay {
             overScrollMode = View.OVER_SCROLL_NEVER
             setHasFixedSize(true)
         }
-        dockWrap.addView(groupDock, LinearLayout.LayoutParams(0, dp(44), 1f))
-        val addGroup = actionIcon(context, R.drawable.ic_add, palette, palette.accent, dp(42), dp(44), getString(R.string.clipboard_new_group)) { }
+        dockWrap.addView(groupDock, LinearLayout.LayoutParams(0, dp(34), 1f))
+        val addGroup = actionIcon(context, R.drawable.ic_add, palette, palette.accent, dp(38), dp(36), getString(R.string.clipboard_new_group)) { }
         dockWrap.addView(addGroup)
-        sheet.addView(dockWrap, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(54)))
+        sheet.addView(
+            dockWrap,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(GROUP_DOCK_HEIGHT_DP)).apply {
+                marginStart = dp(12)
+                marginEnd = dp(12)
+                topMargin = dp(6)
+            }
+        )
         addGroup.setOnClickListener { currentUi()?.let { showGroupNameDialog(it, null) } }
         trayMenu.setOnClickListener {
             val current = currentUi() ?: return@setOnClickListener
@@ -2389,8 +2419,6 @@ object ClipboardOverlay {
             clearAll = clearAll,
             selectionBar = selectionBar,
             selectionCount = selectionCount,
-            selectionPaste = selectionPaste,
-            selectionCancel = selectionCancel,
             hintBar = hintBar,
             bottomSpacer = bottomSpacer
         )
@@ -2686,9 +2714,7 @@ object ClipboardOverlay {
         refreshRows(current)
         if (removed.isEmpty()) return
         showUndoSnackbar(current, getString(R.string.clipboard_cleared)) {
-            for ((entry, index) in removed.asReversed()) {
-                restoreEntry(entry, index)
-            }
+            restoreEntries(removed)
             clipUiCache.clear()
             refreshRows(current)
         }
@@ -2700,9 +2726,7 @@ object ClipboardOverlay {
         refreshRows(current)
         if (removed.isEmpty()) return
         showUndoSnackbar(current, getString(R.string.clipboard_cleared)) {
-            for ((entry, index) in removed.asReversed()) {
-                restoreEntry(entry, index)
-            }
+            restoreEntries(removed)
             clipUiCache.clear()
             refreshRows(current)
         }
@@ -2740,41 +2764,72 @@ object ClipboardOverlay {
         val count = selectedClipIds.size
         current.selectionBar.visibility = if (count > 0) View.VISIBLE else View.GONE
         current.selectionCount.text = getString(R.string.clipboard_selected_count, count)
-        current.selectionPaste.isEnabled = count > 0
-        current.selectionPaste.alpha = if (count > 0) 1f else 0.45f
     }
 
     private fun selectedClips(): List<ClipEntry> =
         historySnapshot().filter { it.id in selectedClipIds }
 
-    private fun pasteSelectedClips(current: OverlayUi) {
-        val selected = selectedClips()
-        if (selected.isEmpty()) {
-            clearClipSelection(current)
-            return
-        }
-        if (selected.size == 1 && selected[0].type == ClipType.IMAGE) {
-            pasteImageEntry(selected[0])
-            return
-        }
-        if (selected.any { it.type == ClipType.IMAGE }) {
-            showInfoSnackbar(current, getString(R.string.clipboard_multi_paste_text_only))
-            return
-        }
+    private fun actionClips(entry: ClipEntry): List<ClipEntry> =
+        if (entry.id in selectedClipIds) selectedClips() else listOf(entry)
 
-        val text = selected.joinToString("\n") { it.text }
-        current.selectionCount.text = getString(R.string.clipboard_pasted_count, selected.size)
-        current.selectionCancel.visibility = View.GONE
-        current.selectionPaste.visibility = View.GONE
-        current.selectionBar.background = ClipboardUiKit.rounded(
-            current.palette.accentAlpha(0.22f), current.dp(12).toFloat(),
-            current.dp(1), current.palette.accentAlpha(0.48f)
-        )
-        pasteEntry(
-            text,
-            feedbackView = current.selectionBar,
-            successToast = getString(R.string.clipboard_pasted_count, selected.size)
-        )
+    private fun pasteClips(current: OverlayUi, clips: List<ClipEntry>) {
+        if (clips.isEmpty()) return
+        if (clips.size == 1 && clips[0].type == ClipType.IMAGE) {
+            pasteImageEntry(clips[0])
+        } else if (clips.any { it.type == ClipType.IMAGE }) {
+            writeClipBatch(current.context, clips) { copied ->
+                if (copied) {
+                    dismissThenRunExternal {
+                        Toast.makeText(
+                            current.context, getString(R.string.clipboard_batch_paste_manual),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                } else {
+                    showInfoSnackbar(current, getString(R.string.clipboard_copy_failed))
+                }
+            }
+        } else {
+            pasteEntry(
+                clips.joinToString("\n") { it.text },
+                successToast = getString(R.string.clipboard_pasted_count, clips.size)
+            )
+        }
+    }
+
+    private fun copyClips(current: OverlayUi, clips: List<ClipEntry>) {
+        when {
+            clips.isEmpty() -> return
+            clips.size == 1 && clips[0].type == ClipType.IMAGE -> copyImageEntry(current, clips[0])
+            clips.none { it.type == ClipType.IMAGE } -> copyEntry(current, clips.joinToString("\n") { it.text })
+            else -> writeClipBatch(current.context, clips) { copied ->
+                showInfoSnackbar(
+                    current, getString(if (copied) R.string.clipboard_copied else R.string.clipboard_copy_failed)
+                )
+            }
+        }
+    }
+
+    private fun writeClipBatch(context: Context, clips: List<ClipEntry>, onComplete: (Boolean) -> Unit) {
+        val mimeTypes = LinkedHashSet<String>()
+        val items = clips.map { clip ->
+            if (clip.type == ClipType.IMAGE) {
+                val uri = ClipboardImageStore.shareUri(context, clip.imagePath)
+                if (uri == null) {
+                    onComplete(false)
+                    return
+                }
+                mimeTypes += clip.mimeType?.takeIf(ClipboardImageStore::isSupported) ?: "image/*"
+                ClipData.Item(uri)
+            } else {
+                mimeTypes += ClipDescription.MIMETYPE_TEXT_PLAIN
+                ClipData.Item(clip.text)
+            }
+        }
+        val data = ClipData(CLIPBOARD_BATCH_LABEL, mimeTypes.toTypedArray(), items.first()).apply {
+            items.drop(1).forEach(::addItem)
+        }
+        withImageBridge(context, { it.setClipboardItems(data) }, onComplete)
     }
 
     private fun pasteEntry(
@@ -2876,10 +2931,11 @@ object ClipboardOverlay {
         markSkipNextClip(text)
         try {
             val clipboard = current.context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            clipboard?.setPrimaryClip(ClipData.newPlainText("EdgeX", text))
+            checkNotNull(clipboard).setPrimaryClip(ClipData.newPlainText("EdgeX", text))
             Toast.makeText(current.context, getString(R.string.clipboard_copied), Toast.LENGTH_SHORT).show()
         } catch (t: Throwable) {
-            XposedBridge.log("$TAG: Clipboard copy failed: ${t.message}")
+            XposedBridge.log("$TAG: Clipboard copy failed: ${t.javaClass.simpleName}")
+            showInfoSnackbar(current, getString(R.string.clipboard_copy_failed))
         }
     }
 
@@ -3225,25 +3281,31 @@ object ClipboardOverlay {
         handler.postDelayed({ if (skipNextImageUri == uri) skipNextImageUri = null }, 1_500L)
     }
 
-    private fun togglePinAndRefresh(current: OverlayUi, entry: ClipEntry) {
-        togglePin(entry.id)
+    private fun togglePinAndRefresh(current: OverlayUi, clips: List<ClipEntry>) {
+        if (clips.isEmpty()) return
+        val ids = clips.mapTo(HashSet()) { it.id }
+        synchronized(this) {
+            ensureHistoryLoadedLocked()
+            val pin = history.any { it.id in ids && !it.pinned }
+            editEntriesLocked(ids) { it.copy(pinned = pin) }
+            persistLocked()
+        }
         refreshRows(current)
-        // The pinned card is recreated in its new section; DiffUtil animates the
-        // move, so no manual per-row fade is needed.
     }
 
-    private fun deleteEntry(current: OverlayUi, entry: ClipEntry) {
-        val removed = removeEntry(entry.id) ?: return
-        invalidateClipUi(entry.id)
+    private fun deleteClips(current: OverlayUi, clips: List<ClipEntry>) {
+        val removed = removeEntries(clips.mapTo(HashSet()) { it.id })
+        if (removed.isEmpty()) return
+        removed.forEach { invalidateClipUi(it.first.id) }
         refreshRows(current)
-        // The owned image file is kept during the undo window and only removed
-        // (asynchronously) once undo can no longer restore the entry.
-        showUndoSnackbar(current, getString(R.string.clipboard_deleted)) {
-            restoreEntry(removed.first, removed.second)
-            invalidateClipUi(removed.first.id)
+        val message = if (removed.size == 1) getString(R.string.clipboard_deleted)
+            else getString(R.string.clipboard_deleted_count, removed.size)
+        showUndoSnackbar(current, message) {
+            restoreEntries(removed)
+            removed.forEach { invalidateClipUi(it.first.id) }
             refreshRows(current)
         }
-        scheduleImageCleanup(removed.first)
+        removed.forEach { scheduleImageCleanup(it.first) }
     }
 
     /** Deletes an owned image file only after the undo window has expired. */
@@ -3306,7 +3368,9 @@ object ClipboardOverlay {
                 viewHolder: RecyclerView.ViewHolder
             ): Int {
                 val clip = viewHolder as? ClipHolder ?: return 0
-                if (clip.adapterPosition == RecyclerView.NO_POSITION || clip.bound == null) return 0
+                if (selectedClipIds.isNotEmpty() || clip.adapterPosition == RecyclerView.NO_POSITION ||
+                    clip.bound == null
+                ) return 0
                 return makeMovementFlags(0, ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT)
             }
 
@@ -3316,8 +3380,8 @@ object ClipboardOverlay {
                 if (holder.adapterPosition == RecyclerView.NO_POSITION) return
                 val entry = holder.bound?.entry ?: return
                 when (direction) {
-                    ItemTouchHelper.RIGHT -> deleteEntry(current, entry)
-                    ItemTouchHelper.LEFT -> togglePinAndRefresh(current, entry)
+                    ItemTouchHelper.RIGHT -> deleteClips(current, listOf(entry))
+                    ItemTouchHelper.LEFT -> togglePinAndRefresh(current, listOf(entry))
                 }
             }
 
@@ -3491,7 +3555,23 @@ object ClipboardOverlay {
         val imageCopies: List<RestoreImageCopy>
     )
 
-    private fun onBackupClicked(current: OverlayUi) {
+    private fun showBackupLocations(current: OverlayUi, anchor: View, restore: Boolean) {
+        val driveAction = if (restore) R.string.clipboard_restore_drive else R.string.clipboard_backup_drive
+        val localAction = if (restore) R.string.clipboard_on_device else R.string.clipboard_in_downloads
+        showMenu(
+            current, anchor, listOf(
+                MenuEntry(getString(driveAction), R.drawable.ic_folder) {
+                    if (restore) startDocumentRestore(current) else onBackupClicked(current, toDrive = true)
+                },
+                MenuEntry(getString(localAction), R.drawable.ic_save) {
+                    if (restore) onRestoreClicked(current) else onBackupClicked(current)
+                }
+            ),
+            title = getString(if (restore) R.string.clipboard_restore else R.string.clipboard_backup)
+        )
+    }
+
+    private fun onBackupClicked(current: OverlayUi, toDrive: Boolean = false) {
         if (!backupInProgress.compareAndSet(false, true)) {
             showInfoSnackbar(current, getString(R.string.clipboard_backup_in_progress))
             return
@@ -3512,11 +3592,10 @@ object ClipboardOverlay {
             showInfoSnackbar(current, getString(R.string.clipboard_backup_empty))
             return
         }
-        val json = snapshotToJson(snapshot)
         val imagePaths = imageFilesFor(snapshot).values.map(File::getAbsolutePath)
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date())
         val name = "edgex-clipboard-$stamp.zip"
-        createBackupInApp(json, imagePaths, name) { created, backupPath ->
+        createBackupInApp(snapshot, imagePaths, name, !toDrive) { created, backupPath ->
             backupInProgress.set(false)
             if (currentUi() == null) unbindShellService()
             if (!created || backupPath.isBlank()) {
@@ -3529,12 +3608,59 @@ object ClipboardOverlay {
                 }
                 return@createBackupInApp
             }
-            currentUi()?.let {
-                showInfoSnackbar(
-                    it,
-                    getString(R.string.clipboard_backup_done, backupPath.removePrefix("/sdcard/"))
-                )
+            if (toDrive) {
+                val launch = { launchBackupDocument(current.context, archiveName = backupPath) }
+                if (currentUi() === current) dismissThenRunExternal(launch) else launch()
+            } else {
+                currentUi()?.let {
+                    showInfoSnackbar(
+                        it, getString(R.string.clipboard_backup_done, backupPath.removePrefix("/sdcard/"))
+                    )
+                }
             }
+        }
+    }
+
+    private fun launchBackupDocument(
+        context: Context,
+        archiveName: String? = null,
+        callback: IShellCallback? = null
+    ) {
+        val intent = Intent().apply {
+            component = ComponentName(
+                BuildConfig.APPLICATION_ID, "${BuildConfig.APPLICATION_ID}.config.ClipboardBackupDocumentActivity"
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (archiveName != null) putExtra(ClipboardBackupDocumentActivity.EXTRA_ARCHIVE, archiveName)
+            if (callback != null) putExtras(Bundle().apply {
+                putBinder(ClipboardBackupDocumentActivity.EXTRA_CALLBACK, callback.asBinder())
+            })
+        }
+        runCatching { context.startActivity(intent) }.onFailure {
+            val error = if (archiveName != null) R.string.clipboard_backup_failed else R.string.clipboard_restore_failed
+            Toast.makeText(context, getString(error), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startDocumentRestore(current: OverlayUi) {
+        if (restoreInProgress.get()) {
+            showInfoSnackbar(current, getString(R.string.clipboard_restore_in_progress))
+            return
+        }
+        val context = current.context
+        val expectedUid = runCatching { context.packageManager.getPackageUid(BuildConfig.APPLICATION_ID, 0) }
+            .getOrNull() ?: return
+        dismissThenRunExternal {
+            launchBackupDocument(context, callback = object : IShellCallback.Stub() {
+                override fun onResult(success: Boolean, output: String?) {
+                    if (!success || Binder.getCallingUid() != expectedUid || output == null) return
+                    val file = File(output)
+                    if (file.parent != "/data/user_de/0/${BuildConfig.APPLICATION_ID}/files/${ClipboardBackupArchive.IMPORT_DIRECTORY}" ||
+                        !ClipboardBackupArchive.importName.matches(file.name)
+                    ) return
+                    handler.post { restoreBackup(context, output, imported = true) }
+                }
+            })
         }
     }
 
@@ -3645,92 +3771,92 @@ object ClipboardOverlay {
             getString(R.string.clipboard_restore),
             destructive = true
         ) {
-            if (!restoreInProgress.compareAndSet(false, true)) {
-                showInfoSnackbar(current, getString(R.string.clipboard_restore_in_progress))
-                return@showConfirmDialog
+            restoreBackup(current.context, path)
+        }
+    }
+
+    private fun restoreBackup(context: Context, path: String, imported: Boolean = false) {
+        if (!restoreInProgress.compareAndSet(false, true)) {
+            reportRestore(context, getString(R.string.clipboard_restore_in_progress))
+            return
+        }
+        ensureShellService(context)
+        val isZip = path.endsWith(".zip")
+        val prepareZip = if (isZip) {
+            "rm -rf ${shellQuote(restoreTempDir)} && " +
+                "mkdir -p ${shellQuote(restoreTempDir)} && " +
+                "chown system:system ${shellQuote(restoreTempDir)} && " +
+                "chmod 700 ${shellQuote(restoreTempDir)} && "
+        } else ""
+        val command = "mkdir -p ${shellQuote(File(restoreTempFile).parent.orEmpty())} && " +
+            prepareZip + "cp -f ${shellQuote(path)} ${shellQuote(restoreTempFile)} && " +
+            "chown system:system ${shellQuote(restoreTempFile)} && " +
+            "chmod 600 ${shellQuote(restoreTempFile)}" +
+            if (imported) " && rm -f ${shellQuote(path)}" else ""
+        runRoot(command) { success, _ ->
+            if (!success) {
+                restoreFailed(context)
+                return@runRoot
             }
-            val isZip = path.endsWith(".zip")
-            val command = if (isZip) {
-                "mkdir -p ${shellQuote(File(restoreTempFile).parent.orEmpty())} && " +
-                        "rm -rf ${shellQuote(restoreTempDir)} && " +
-                        "mkdir -p ${shellQuote(restoreTempDir)} && " +
-                        "chown system:system ${shellQuote(restoreTempDir)} && " +
-                        "chmod 700 ${shellQuote(restoreTempDir)} && " +
-                        "cp -f ${shellQuote(path)} ${shellQuote(restoreTempFile)} && " +
-                        "chmod 644 ${shellQuote(restoreTempFile)}"
-            } else {
-                "cp -f ${shellQuote(path)} ${shellQuote(restoreTempFile)} && " +
-                        "chmod 644 ${shellQuote(restoreTempFile)}"
-            }
-            runRoot(command) { success, output ->
-                if (!success) {
-                    restoreInProgress.set(false)
-                    if (!success) {
-                        XposedBridge.log(
-                            "$TAG: restore staging failed (zip=$isZip, " +
-                                    "error=${output.takeIf { it.isNotBlank() }?.take(160)})"
-                        )
+            ioExecutor.execute {
+                if (isZip) {
+                    val plan = readZipBackupPlan(context)
+                    if (plan == null) {
+                        handler.post { restoreFailed(context) }
+                        return@execute
                     }
-                    currentUi()?.let { showInfoSnackbar(it, getString(R.string.clipboard_restore_failed)) }
-                    if (currentUi() == null) unbindShellService()
-                    return@runRoot
-                }
-                ioExecutor.execute {
-                    if (isZip) {
-                        val plan = readZipBackupPlan(current.context)
-                        if (plan == null) {
-                            restoreInProgress.set(false)
-                            handler.post {
-                                currentUi()?.let {
-                                    showInfoSnackbar(it, getString(R.string.clipboard_restore_failed))
-                                }
-                                if (currentUi() == null) unbindShellService()
-                            }
-                            return@execute
-                        }
-                        val copyCommand = restoreImageCopyCommand(
-                            plan, ClipboardImageStore.directory(current.context)
-                        )
+                    val copyCommand = restoreImageCopyCommand(plan, ClipboardImageStore.directory(context))
+                    handler.post {
                         if (copyCommand.isEmpty()) {
-                            handler.post { finishRestore(plan.snapshot) }
+                            finishRestore(context, plan.snapshot)
                         } else {
-                            runRoot(copyCommand) { copied, output ->
-                                if (copied) finishRestore(plan.snapshot) else {
-                                    restoreInProgress.set(false)
-                                    XposedBridge.log(
-                                        "$TAG: restore image copy failed " +
-                                                "(error=${output.takeIf { it.isNotBlank() }?.take(160)})"
-                                    )
-                                    currentUi()?.let {
-                                        showInfoSnackbar(it, getString(R.string.clipboard_restore_failed))
-                                    }
-                                    if (currentUi() == null) unbindShellService()
-                                }
+                            runRoot(copyCommand) { copied, _ ->
+                                if (copied) finishRestore(context, plan.snapshot)
+                                else restoreFailed(context)
                             }
                         }
-                    } else {
-                        val restored =
-                        runCatching { File(restoreTempFile).readText() }.getOrNull()
-                            ?.let { jsonToSnapshot(it) }
-                        handler.post {
-                            if (restored == null) {
-                                restoreInProgress.set(false)
-                                currentUi()?.let {
-                                    showInfoSnackbar(it, getString(R.string.clipboard_restore_failed))
-                                }
-                                if (currentUi() == null) unbindShellService()
-                            } else {
-                                finishRestore(restored)
-                            }
-                        }
+                    }
+                } else {
+                    val json = runCatching {
+                        File(restoreTempFile).takeIf {
+                            it.length() in 1L..ClipboardBackupArchive.MAX_MANIFEST_BYTES.toLong()
+                        }?.readText()
+                    }.getOrNull()
+                    val snapshot = json?.let(::jsonToSnapshot)
+                    handler.post {
+                        if (snapshot != null) finishRestore(context, snapshot)
+                        else restoreFailed(context)
                     }
                 }
             }
         }
     }
 
-    private fun finishRestore(snapshot: ClipboardHistorySnapshot) {
+    private fun reportRestore(context: Context, message: String) {
+        val current = currentUi()
+        if (current != null) showInfoSnackbar(current, message)
+        else Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+    }
+
+    private fun cleanupRestoreStaging() {
+        runCatching { File(restoreTempFile).delete() }
+        runCatching { File(restoreTempDir).deleteRecursively() }
+    }
+
+    private fun restoreFailed(context: Context) {
         ioExecutor.execute {
+            cleanupRestoreStaging()
+            handler.post {
+                restoreInProgress.set(false)
+                if (currentUi() == null) unbindShellService()
+                reportRestore(context, getString(R.string.clipboard_restore_failed))
+            }
+        }
+    }
+
+    private fun finishRestore(context: Context, snapshot: ClipboardHistorySnapshot) {
+        ioExecutor.execute {
+            cleanupRestoreStaging()
             val existing = historySnapshot()
             val imageDigests = HashMap<String, String>()
             (existing + snapshot.entries)
@@ -3774,19 +3900,10 @@ object ClipboardOverlay {
 
                 restoreInProgress.set(false)
                 val current = currentUi()
-                if (current == null) {
-                    unbindShellService()
-                    return@post
-                }
-                refreshRows(current)
-                showInfoSnackbar(
-                    current,
-                    getString(
-                        R.string.clipboard_restore_done,
-                        mergeResult.addedCount,
-                        mergeResult.duplicateCount
-                    )
-                )
+                if (current == null) unbindShellService() else refreshRows(current)
+                reportRestore(context, getString(
+                    R.string.clipboard_restore_done, mergeResult.addedCount, mergeResult.duplicateCount
+                ))
             }
         }
     }
@@ -3845,7 +3962,7 @@ object ClipboardOverlay {
                 while (true) {
                     val entry = zip.nextEntry ?: break
                     entryCount++
-                    if (entryCount > 64 || !seenNames.add(entry.name)) {
+                    if (entryCount > ClipboardBackupArchive.MAX_IMAGES + 2 || !seenNames.add(entry.name)) {
                         throw IOException("invalid backup entry count or duplicate")
                     }
                     if (entry.isDirectory) {
@@ -3859,7 +3976,7 @@ object ClipboardOverlay {
                     when {
                         entry.name == "manifest.json" -> {
                             outputFile = manifestFile
-                            entryLimit = 16L * 1024 * 1024
+                            entryLimit = ClipboardBackupArchive.MAX_MANIFEST_BYTES.toLong()
                         }
                         imageNamePattern.matches(entry.name) -> {
                             outputFile = File(imageDir, entry.name.substringAfter("images/"))
@@ -3877,7 +3994,7 @@ object ClipboardOverlay {
                             if (count == 0) continue
                             entryBytes += count
                             totalBytes += count
-                            if (entryBytes > entryLimit || totalBytes > 512L * 1024 * 1024) {
+                            if (entryBytes > entryLimit || totalBytes > ClipboardBackupArchive.MAX_BYTES) {
                                 throw IOException("backup expanded size exceeds limit")
                             }
                             output.write(buffer, 0, count)
@@ -3915,7 +4032,7 @@ object ClipboardOverlay {
 
             val target = File(
                 destinationDir,
-                ClipboardImageStore.fileNameFor("restore-${entry.timestamp}-$index", entry.mimeType)
+                ClipboardImageStore.fileNameFor("restore-${java.util.UUID.randomUUID()}-$index", entry.mimeType)
             )
             copies += RestoreImageCopy(source, target)
             retained += entry.copy(imagePath = target.absolutePath, imageUri = null)
@@ -3981,7 +4098,7 @@ object ClipboardOverlay {
      * rejected so a corrupt or hostile file cannot freeze system_server.
      */
     private fun jsonToSnapshot(json: String): ClipboardHistorySnapshot? = runCatching {
-        if (json.length > MAX_BACKUP_CHARS) return@runCatching null
+        if (json.length > ClipboardBackupArchive.MAX_MANIFEST_BYTES) return@runCatching null
         val root = JSONObject(json)
         val version = root.optInt("version", 0)
         if (version != BACKUP_VERSION) return@runCatching null
@@ -4054,7 +4171,6 @@ object ClipboardOverlay {
     }.getOrNull()
 
     private const val BACKUP_VERSION = 2
-    private const val MAX_BACKUP_CHARS = 4_000_000
     private const val MAX_CLIP_CHARS = 100_000
     private const val MAX_GROUPS = 100
     private const val MAX_GROUP_NAME_CHARS = 80
@@ -4131,9 +4247,10 @@ object ClipboardOverlay {
 
     /** Builds the archive under the app UID, which owns the private image files. */
     private fun createBackupInApp(
-        manifestJson: String,
+        snapshot: ClipboardHistorySnapshot,
         imagePaths: List<String>,
         archiveName: String,
+        toDownloads: Boolean,
         onDone: (Boolean, String) -> Unit
     ) {
         val context = shellContext ?: ui?.context
@@ -4154,16 +4271,30 @@ object ClipboardOverlay {
             timeout = Runnable { finish(false, "backup service timed out") }
             handler.postDelayed(timeout, 30_000L)
             try {
-            executor.createClipboardBackup(
-                manifestJson,
-                imagePaths,
-                archiveName,
-                object : IShellCallback.Stub() {
-                    override fun onResult(success: Boolean, output: String?) {
-                        handler.post { finish(success, output.orEmpty()) }
+                val (reader, writer) = ParcelFileDescriptor.createPipe()
+                try {
+                    executor.createClipboardBackupFromStream(
+                        reader, imagePaths, archiveName, toDownloads,
+                        object : IShellCallback.Stub() {
+                            override fun onResult(success: Boolean, output: String?) {
+                                handler.post { finish(success, output.orEmpty()) }
+                            }
+                        }
+                    )
+                    ioExecutor.execute {
+                        runCatching {
+                            ParcelFileDescriptor.AutoCloseOutputStream(writer).use { output ->
+                                val json = snapshotToJson(snapshot)
+                                output.write(json.toByteArray(Charsets.UTF_8))
+                            }
+                        }.onFailure { handler.post { finish(false, "backup data could not be written") } }
                     }
+                } catch (t: Throwable) {
+                    writer.close()
+                    throw t
+                } finally {
+                    reader.close()
                 }
-            )
             } catch (t: Throwable) {
                 XposedBridge.log("$TAG: backup service call failed: ${t.javaClass.simpleName}")
                 finish(false, t.message.orEmpty())
@@ -4249,11 +4380,11 @@ object ClipboardOverlay {
                 MenuEntry(
                     label = getString(R.string.clipboard_backup),
                     iconRes = R.drawable.ic_save
-                ) { onBackupClicked(current) },
+                ) { showBackupLocations(current, anchor, restore = false) },
                 MenuEntry(
                     label = getString(R.string.clipboard_restore),
                     iconRes = R.drawable.ic_restart_alt
-                ) { onRestoreClicked(current) }
+                ) { showBackupLocations(current, anchor, restore = true) }
             ),
             title = getString(R.string.clipboard_count, historySnapshot().size)
         )
@@ -4294,7 +4425,42 @@ object ClipboardOverlay {
         )
     }
 
+    private fun showSelectionMenu(current: OverlayUi, anchor: View) {
+        val clips = selectedClips()
+        if (clips.isEmpty()) return
+        val allPinned = clips.all { it.pinned }
+        showMenu(
+            current, anchor,
+            listOf(
+                MenuEntry(getString(R.string.clipboard_copy), R.drawable.ic_content_copy) {
+                    copyClips(current, clips)
+                },
+                MenuEntry(getString(R.string.clipboard_paste), R.drawable.ic_paste) {
+                    pasteClips(current, clips)
+                },
+                MenuEntry(getString(R.string.clipboard_share), R.drawable.ic_share, externalAction = true) {
+                    shareEntries(current.context, clips)
+                },
+                MenuEntry(
+                    getString(if (allPinned) R.string.clipboard_unpin else R.string.clipboard_pin),
+                    R.drawable.ic_pin_filled
+                ) { togglePinAndRefresh(current, clips) },
+                MenuEntry(getString(R.string.clipboard_move_to_group), R.drawable.ic_folder) {
+                    showGroupPicker(current, anchor, clips)
+                },
+                MenuEntry(getString(R.string.clipboard_delete), R.drawable.ic_delete, current.palette.danger) {
+                    deleteClips(current, clips)
+                }
+            ),
+            title = getString(R.string.clipboard_selected_count, clips.size)
+        )
+    }
+
     private fun showItemMenu(current: OverlayUi, anchor: View, entry: ClipEntry) {
+        if (entry.id in selectedClipIds && selectedClipIds.size > 1) {
+            showSelectionMenu(current, anchor)
+            return
+        }
         val isImage = entry.type == ClipType.IMAGE
         val items = ArrayList<MenuEntry>(9)
         val hasOriginalLocation = isImage && originalDocumentUri(current.context, entry) != null
@@ -4312,11 +4478,11 @@ object ClipboardOverlay {
             ),
             iconRes = R.drawable.ic_pin_filled,
             tint = if (entry.pinned) current.palette.accent else null
-        ) { togglePinAndRefresh(current, entry) }
+        ) { togglePinAndRefresh(current, listOf(entry)) }
         items += MenuEntry(
             label = getString(R.string.clipboard_move_to_group),
             iconRes = R.drawable.ic_folder
-        ) { showGroupPicker(current, anchor, entry) }
+        ) { showGroupPicker(current, anchor, listOf(entry)) }
         if (isImage) {
             items += MenuEntry(
                 label = getString(R.string.clipboard_open_image),
@@ -4370,38 +4536,39 @@ object ClipboardOverlay {
             iconRes = R.drawable.ic_delete,
             tint = current.palette.danger,
             dividerAfter = false
-        ) { deleteEntry(current, entry) }
+        ) { deleteClips(current, listOf(entry)) }
         showMenu(current, anchor, items)
     }
 
     /** Internal group picker: same transient layer, no popup window. */
-    private fun showGroupPicker(current: OverlayUi, anchor: View, entry: ClipEntry) {
+    private fun showGroupPicker(current: OverlayUi, anchor: View, clips: List<ClipEntry>) {
+        val ids = clips.mapTo(HashSet()) { it.id }
         val items = ArrayList<MenuEntry>()
-        if (entry.group != null) {
+        if (clips.any { it.group != null }) {
             items += MenuEntry(
                 label = getString(R.string.clipboard_remove_from_group),
                 iconRes = R.drawable.ic_close,
                 tint = current.palette.danger
             ) {
-                moveToGroup(entry.id, null)
+                moveToGroup(ids, null)
                 refreshRows(current)
             }
         }
         groupsSnapshot().forEach { name ->
-            val isCurrent = entry.group == name
+            val isCurrent = clips.all { it.group == name }
             items += MenuEntry(
                 label = name,
                 iconRes = if (isCurrent) R.drawable.ic_check else R.drawable.ic_folder,
                 tint = if (isCurrent) current.palette.accent else null
             ) {
-                moveToGroup(entry.id, name)
+                moveToGroup(ids, name)
                 refreshRows(current)
             }
         }
         items += MenuEntry(
             label = getString(R.string.clipboard_new_group),
             iconRes = R.drawable.ic_add
-        ) { showGroupNameDialog(current, null, moveEntryText = entry.id) }
+        ) { showGroupNameDialog(current, null, moveClipIds = ids) }
         showMenu(current, anchor, items, title = getString(R.string.clipboard_move_to_group))
     }
 
@@ -4693,7 +4860,7 @@ object ClipboardOverlay {
     private fun showGroupNameDialog(
         current: OverlayUi,
         existingName: String?,
-        moveEntryText: String? = null
+        moveClipIds: Set<String> = emptySet()
     ) {
         val content = LinearLayout(current.context).apply { orientation = LinearLayout.VERTICAL }
         val title = if (existingName == null) {
@@ -4728,16 +4895,15 @@ object ClipboardOverlay {
                 val name = input.text?.toString().orEmpty().trim()
                 if (name.isNotEmpty()) {
                     val ok = if (existingName == null) {
-                        createGroup(name)
+                        createGroup(name, moveClipIds)
                     } else {
                         renameGroup(existingName, name)
                     }
                     if (ok) {
-                        if (moveEntryText != null) moveToGroup(moveEntryText, name)
                         if (existingName != null && current.expandedGroup == existingName) {
                             current.expandedGroup = name
                         }
-                        if (existingName == null && moveEntryText == null) {
+                        if (existingName == null && moveClipIds.isEmpty()) {
                             current.expandedGroup = name
                             current.groupTray.visibility = View.VISIBLE
                         }
